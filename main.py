@@ -1,6 +1,27 @@
 # -*- coding: utf-8 -*-
 
 import os
+import json
+
+# --- Déploiement sur Railway : Création des fichiers d'authentification ---
+# On vérifie si les variables d'environnement pour Google existent.
+# C'est la méthode sécurisée pour fournir les clés à un serveur.
+google_creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+google_token_json = os.getenv("GOOGLE_TOKEN_JSON")
+
+# Si la variable pour credentials.json existe, on écrit le fichier.
+if google_creds_json:
+    with open("credentials.json", "w") as f:
+        f.write(google_creds_json)
+    print("✅ Fichier credentials.json créé à partir des variables d'environnement.")
+
+# Si la variable pour token.json existe, on écrit le fichier.
+if google_token_json:
+    with open("token.json", "w") as f:
+        f.write(google_token_json)
+    print("✅ Fichier token.json créé à partir des variables d'environnement.")
+# --- Fin de la section de déploiement ---
+
 import logging
 import logging.handlers # Nécessaire pour la rotation des logs
 from dotenv import load_dotenv

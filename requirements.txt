@@ -1,0 +1,14 @@
+# Dépendances essentielles pour le bot Telegram
+python-telegram-bot==20.7
+openai==1.90.0
+python-dotenv==1.0.0
+
+# Google Calendar API
+google-api-python-client==2.173.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+google-auth==2.40.3
+
+# Autres dépendances nécessaires
+requests==2.31.0
+python-dateutil==2.8.2 

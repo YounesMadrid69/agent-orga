@@ -1,0 +1,29 @@
+# Fichiers sensibles - NE JAMAIS ENVOYER SUR GITHUB
+.env
+token.json
+credentials.json
+
+# Logs
+*.log
+*.log.*
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environnement virtuel
+venv/
+env/
+ENV/
+
+# Fichiers système
+.DS_Store
+.vscode/
+.idea/
+
+# Données temporaires
+*.tmp
+*.temp 

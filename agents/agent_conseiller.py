@@ -2,7 +2,8 @@
 
 import os
 import json
-from openai import OpenAI
+# On importe la nouvelle bibliothèque de Google
+import google.generativeai as genai
 import datetime
 import logging
 
@@ -22,11 +23,17 @@ from .agent_calendrier import (
 )
 
 # --- Configuration ---
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-logger = logging.getLogger(__name__)
+# On configure l'API Google Gemini
+try:
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    logger = logging.getLogger(__name__)
+    logger.info("✅ API Google Gemini configurée avec succès.")
+except Exception as e:
+    # Cette log est cruciale si la clé API est manquante sur Railway
+    logging.getLogger(__name__).error(f"🔥 ERREUR: Impossible de configurer Google GenAI. La clé GOOGLE_API_KEY est-elle bien définie dans les variables d'environnement ? Erreur: {e}")
 
-
-# --- Définition de la "Boîte à Outils" Complète ---
+# --- Définition de la "Boîte à Outils" Complète (format OpenAI) ---
+# On garde ce format car il est clair, on le convertira pour Gemini à la volée.
 tools = [
     # Outils pour les Tâches
     {"type": "function", "function": {"name": "lister_taches", "description": "Obtenir la liste de toutes les tâches, triées par priorité (selon la matrice d'Eisenhower)."}},
@@ -66,114 +73,104 @@ available_functions = {
 }
 
 
-# --- Le Cerveau / Routeur Amélioré ---
-
 def router_requete_utilisateur(historique_conversation: list):
     """
-    Gère la conversation en se souvenant du contexte et en utilisant les outils
-    de manière conversationnelle. Cette version est plus robuste car elle
-    travaille sur une copie de l'historique pour éviter les états incohérents.
+    Gère la conversation en utilisant Google Gemini.
+    Cette fonction est le nouveau cerveau de l'IA.
     """
-    logger.info("🧠 ROUTEUR: Nouvelle requête reçue, début de l'analyse.")
+    logger.info("🧠 ROUTEUR (GEMINI): Nouvelle requête reçue, début de l'analyse.")
     
-    # On travaille sur une copie de l'historique pour ce tour de conversation.
-    messages = list(historique_conversation)
-    logger.debug(f"🧠 ROUTEUR: Historique entrant pour analyse (contient {len(messages)} messages).")
-
-
-    # Étape 1 : On envoie l'historique de la conversation et les outils à l'IA
-    try:
-        logger.info("🧠 ROUTEUR: Envoi des informations à OpenAI pour obtenir une décision...")
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-        )
-        response_message = response.choices[0].message
-    except Exception as e:
-        logger.error(f"🔥 ERREUR: L'appel à l'API OpenAI (étape 1) a échoué: {e}")
-        return f"Désolé, une erreur de communication est survenue: {e}"
-
-    # On ajoute la réponse de l'IA (qui peut contenir du texte ou des appels d'outils)
-    messages.append(response_message)
-    
-    tool_calls = response_message.tool_calls
-    
-    # Étape 2 : Si l'IA ne veut pas utiliser d'outil, on met à jour l'historique principal et on retourne la réponse.
-    if not tool_calls:
-        logger.info("🤖 DÉCISION IA: Répondre directement sans utiliser d'outil.")
-        logger.debug(f"Contenu de la réponse directe : {response_message.content}")
-        # On met à jour l'historique principal avec la réponse de l'IA.
-        historique_conversation.append(response_message)
-        return response_message.content
-
-    # Étape 3 : Si l'IA veut utiliser un ou plusieurs outils, on les exécute
-    logger.info(f"🤖 DÉCISION IA: Demande d'utilisation d'outil(s): {[tc.function.name for tc in tool_calls]}")
-    
-    # On prépare une liste pour ne stocker QUE les nouveaux messages d'outils de ce tour
-    tool_messages = []
-    
-    for tool_call in tool_calls:
-        function_name = tool_call.function.name
-        function_to_call = available_functions.get(function_name)
+    # 1. Préparation des données pour Gemini
+    historique_pour_gemini = []
+    system_prompt = ""
+    for message in historique_conversation:
+        role = message["role"]
+        if role == "system":
+            system_prompt = message["content"]
+            continue # Le prompt système est géré séparément par Gemini
         
-        if function_to_call:
-            try:
-                function_args = json.loads(tool_call.function.arguments)
-                logger.info(f"🛠️ OUTIL: Exécution de la fonction '{function_name}' avec les arguments: {function_args}")
-                function_response = function_to_call(**function_args)
-                logger.debug(f"🛠️ OUTIL: Résultat brut de '{function_name}': {function_response}")
+        # On adapte les rôles pour Gemini ('assistant' devient 'model')
+        if role == "assistant":
+            role = "model"
+            
+        historique_pour_gemini.append({'role': role, 'parts': [message["content"]]})
+
+    try:
+        # 2. Configuration du modèle Gemini
+        # On utilise le modèle le plus récent et performant comme demandé.
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-pro",
+            system_instruction=system_prompt,
+            # On convertit notre liste d'outils au format que Gemini attend
+            tools=[tool['function'] for tool in tools]
+        )
+        
+        # 3. Boucle de conversation avec l'IA
+        # On envoie l'historique et on attend la réponse
+        logger.info("🧠 ROUTEUR (GEMINI): Envoi des informations à Google Gemini...")
+        response = model.generate_content(historique_pour_gemini)
+        
+        # 4. Traitement de la réponse de l'IA (qui peut demander des outils)
+        while response.candidates[0].content.parts and response.candidates[0].content.parts[0].function_call:
+            # L'IA a demandé d'utiliser un ou plusieurs outils
+            function_calls = response.candidates[0].content.parts
+            
+            # On ajoute la demande de l'IA à notre historique
+            historique_pour_gemini.append(response.candidates[0].content)
+            
+            tool_responses = []
+            
+            for function_call in function_calls:
+                call = function_call.function_call
+                function_name = call.name
+                args = dict(call.args)
                 
-                # On ajoute le résultat de l'outil à notre liste temporaire
-                tool_messages.append({
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": json.dumps(function_response, ensure_ascii=False),
-                })
-            except Exception as e:
-                logger.error(f"🔥 ERREUR: L'exécution de la fonction '{function_name}' a échoué: {e}")
-                tool_messages.append({
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": json.dumps({"erreur": str(e)}, ensure_ascii=False),
-                })
-        else:
-            logger.warning(f"⚠️ ATTENTION: L'IA a tenté d'appeler une fonction inconnue: {function_name}")
-            tool_messages.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "name": function_name,
-                "content": json.dumps({"erreur": "Fonction non implémentée"}, ensure_ascii=False),
-            })
+                logger.info(f"🛠️ OUTIL (GEMINI): L'IA demande l'exécution de '{function_name}' avec les arguments: {args}")
+                
+                # On exécute la fonction demandée
+                function_to_call = available_functions.get(function_name)
+                if function_to_call:
+                    try:
+                        function_response = function_to_call(**args)
+                        # On prépare la réponse de l'outil pour la renvoyer à l'IA
+                        tool_responses.append({
+                            "tool_call_id": function_call.id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": json.dumps(function_response, ensure_ascii=False)
+                        })
+                    except Exception as e:
+                        logger.error(f"🔥 ERREUR: L'exécution de la fonction '{function_name}' a échoué: {e}")
+                        # On informe l'IA que l'outil a échoué
+                        tool_responses.append({
+                             "tool_call_id": function_call.id,
+                             "role": "tool",
+                             "name": function_name,
+                             "content": json.dumps({"erreur": str(e)}, ensure_ascii=False)
+                        })
+                else:
+                    logger.warning(f"⚠️ ATTENTION: L'IA a tenté d'appeler une fonction inconnue: {function_name}")
+            
+            # On ajoute les réponses des outils à l'historique
+            historique_pour_gemini.append({'role': 'tool', 'parts': [json.dumps(r) for r in tool_responses]})
 
-    # On ajoute les résultats des outils à l'historique temporaire pour l'IA
-    messages.extend(tool_messages)
+            # On renvoie les résultats à l'IA pour qu'elle puisse formuler une réponse finale
+            logger.info("🧠 ROUTEUR (GEMINI): Envoi des résultats des outils à Google Gemini pour la synthèse finale...")
+            response = model.generate_content(historique_pour_gemini)
 
-    # Étape 4 : On renvoie TOUT l'historique temporaire mis à jour à l'IA pour qu'il formule une réponse finale
-    logger.info("🧠 ROUTEUR: Envoi des résultats des outils à OpenAI pour la synthèse finale...")
-    try:
-        second_response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-        )
-        final_response_message = second_response.choices[0].message
+        # 5. Réponse finale de l'IA (après les outils, ou directement)
+        final_response_text = response.text
+        logger.info("✅ ROUTEUR (GEMINI): Réponse finale générée et prête à être envoyée.")
         
-        # Maintenant que tout le cycle est terminé, on met à jour l'historique principal
-        # avec l'ensemble de l'échange (appel d'outil, résultat, réponse finale).
-        historique_conversation.append(response_message)
-        # On ajoute uniquement les nouveaux messages d'outils de ce tour
-        historique_conversation.extend(tool_messages)
-        historique_conversation.append(final_response_message)
+        # On met à jour l'historique principal pour le prochain tour
+        # (c'est une simplification, le vrai historique est dans `historique_pour_gemini` mais on doit garder la structure)
+        historique_conversation.append({"role": "assistant", "content": final_response_text})
+        
+        return final_response_text
 
-        logger.info("✅ ROUTEUR: Réponse finale générée et prête à être envoyée.")
-        logger.debug(f"Contenu de la réponse finale : {final_response_message.content}")
-        return final_response_message.content
     except Exception as e:
-        logger.error(f"🔥 ERREUR: L'appel à l'API OpenAI (étape 2) a échoué: {e}")
-        return f"Désolé, une erreur est survenue après l'exécution de l'action: {e}"
+        logger.error(f"🔥 ERREUR: L'appel à l'API Google Gemini a échoué: {e}")
+        return f"Désolé, une erreur de communication avec l'IA est survenue: {e}"
 
 
 def generer_analyse_situation():

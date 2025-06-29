@@ -72,5 +72,12 @@
         "description": "Un projet créatif, potentiellement dans l'art ou le design, sous le label 'Kawn Studio'.",
         "calendrier_associe": "Kawn Studio",
         "emoji": "🪐"
+    },
+    {
+        "id": "proj_0b8d9b40-6da3-466d-852d-9dc723864347",
+        "nom": "Road To 99",
+        "description": "Devenir un ailier monstrueux",
+        "calendrier_associe": "⚽️ Foot",
+        "emoji": "⚡️"
     }
 ]

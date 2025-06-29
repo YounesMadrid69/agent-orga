@@ -4,6 +4,8 @@ import os
 import json
 # On importe la nouvelle bibliothèque de Google
 import google.generativeai as genai
+# On importe le convertisseur pour les logs
+# from google.generativeai.types import to_dict
 import datetime
 import logging
 
@@ -19,7 +21,8 @@ from .agent_projets import (
 )
 from .agent_calendrier import (
     lister_prochains_evenements, creer_evenement_calendrier, modifier_evenement_calendrier,
-    supprimer_evenement_calendrier, lister_tous_les_calendriers
+    supprimer_evenement_calendrier, lister_tous_les_calendriers,
+    creer_calendrier, renommer_calendrier, supprimer_calendrier
 )
 
 # --- Configuration ---
@@ -32,35 +35,42 @@ except Exception as e:
     # Cette log est cruciale si la clé API est manquante sur Railway
     logging.getLogger(__name__).error(f"🔥 ERREUR: Impossible de configurer Google GenAI. La clé GOOGLE_API_KEY est-elle bien définie dans les variables d'environnement ? Erreur: {e}")
 
-# --- Définition de la "Boîte à Outils" Complète (format OpenAI) ---
-# On garde ce format car il est clair, on le convertira pour Gemini à la volée.
-tools = [
+# --- Traducteur d'Outils et Mapping ---
+
+# On garde la définition originale des outils qui est plus lisible
+# NOTE : Les types sont maintenant directement en MAJUSCULES pour être compatibles avec Gemini.
+gemini_tools = [
     # Outils pour les Tâches
     {"type": "function", "function": {"name": "lister_taches", "description": "Obtenir la liste de toutes les tâches, triées par priorité (selon la matrice d'Eisenhower)."}},
-    {"type": "function", "function": {"name": "ajouter_tache", "description": "Ajouter une nouvelle tâche. L'importance et l'urgence peuvent être spécifiées.", "parameters": {"type": "object", "properties": {"description": {"type": "string", "description": "Description de la tâche."}, "nom_projet": {"type": "string", "description": "Optionnel. Nom du projet associé."}, "important": {"type": "boolean", "description": "La tâche est-elle importante ?"}, "urgent": {"type": "boolean", "description": "La tâche est-elle urgente ?"}}, "required": ["description"]}}},
-    {"type": "function", "function": {"name": "modifier_tache", "description": "Modifier une tâche (description, projet, importance, urgence). La priorité sera recalculée automatiquement.", "parameters": {"type": "object", "properties": {"description_actuelle": {"type": "string", "description": "Description actuelle de la tâche à modifier."}, "nouvelle_description": {"type": "string", "description": "Optionnel. La nouvelle description de la tâche."}, "nom_projet": {"type": "string", "description": "Optionnel. Le nouveau nom du projet pour la tâche."}, "nouvelle_importance": {"type": "boolean", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "boolean", "description": "Optionnel. Le nouveau statut d'urgence."}}, "required": ["description_actuelle"]}}},
-    {"type": "function", "function": {"name": "changer_statut_tache", "description": "Changer le statut d'une tâche (à faire, en cours, terminée).", "parameters": {"type": "object", "properties": {"description_tache": {"type": "string", "description": "Description de la tâche à modifier."}, "nouveau_statut": {"type": "string", "description": "Le nouveau statut."}}, "required": ["description_tache", "nouveau_statut"]}}},
-    {"type": "function", "function": {"name": "supprimer_tache", "description": "Supprimer une tâche.", "parameters": {"type": "object", "properties": {"description_tache": {"type": "string", "description": "Description de la tâche à supprimer."}}, "required": ["description_tache"]}}},
+    {"type": "function", "function": {"name": "ajouter_tache", "description": "Ajouter une nouvelle tâche. L'importance et l'urgence peuvent être spécifiées.", "parameters": {"type": "OBJECT", "properties": {"description": {"type": "STRING", "description": "Description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Nom du projet associé."}, "important": {"type": "BOOLEAN", "description": "La tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La tâche est-elle urgente ?"}}, "required": ["description"]}}},
+    {"type": "function", "function": {"name": "modifier_tache", "description": "Modifier une tâche (description, projet, importance, urgence). La priorité sera recalculée automatiquement.", "parameters": {"type": "OBJECT", "properties": {"description_actuelle": {"type": "STRING", "description": "Description actuelle de la tâche à modifier."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet pour la tâche."}, "nouvelle_importance": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'urgence."}}, "required": ["description_actuelle"]}}},
+    {"type": "function", "function": {"name": "changer_statut_tache", "description": "Changer le statut d'une tâche (à faire, en cours, terminée).", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à modifier."}, "nouveau_statut": {"type": "STRING", "description": "Le nouveau statut."}}, "required": ["description_tache", "nouveau_statut"]}}},
+    {"type": "function", "function": {"name": "supprimer_tache", "description": "Supprimer une tâche.", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à supprimer."}}, "required": ["description_tache"]}}},
     
     # Outils pour les Sous-Tâches
-    {"type": "function", "function": {"name": "ajouter_sous_tache", "description": "Ajouter une sous-tâche à une tâche existante.", "parameters": {"type": "object", "properties": {"description_tache_parent": {"type": "string", "description": "Description de la tâche parent à laquelle ajouter la sous-tâche."}, "description_sous_tache": {"type": "string", "description": "Description de la nouvelle sous-tâche."}, "important": {"type": "boolean", "description": "La sous-tâche est-elle importante ?"}, "urgent": {"type": "boolean", "description": "La sous-tâche est-elle urgente ?"}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
-    {"type": "function", "function": {"name": "lister_sous_taches", "description": "Lister toutes les sous-tâches d'une tâche parent, triées par priorité.", "parameters": {"type": "object", "properties": {"description_tache_parent": {"type": "string", "description": "Description de la tâche parent dont on veut voir les sous-tâches."}}, "required": ["description_tache_parent"]}}},
-    {"type": "function", "function": {"name": "modifier_sous_tache", "description": "Modifier une sous-tâche existante (description, importance, urgence).", "parameters": {"type": "object", "properties": {"description_tache_parent": {"type": "string", "description": "Description de la tâche parent."}, "description_sous_tache_actuelle": {"type": "string", "description": "Description actuelle de la sous-tâche à modifier."}, "nouvelle_description": {"type": "string", "description": "Optionnel. La nouvelle description de la sous-tâche."}, "nouvelle_importance": {"type": "boolean", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "boolean", "description": "Optionnel. Le nouveau statut d'urgence."}}, "required": ["description_tache_parent", "description_sous_tache_actuelle"]}}},
-    {"type": "function", "function": {"name": "changer_statut_sous_tache", "description": "Changer le statut d'une sous-tâche (à faire, en cours, terminée).", "parameters": {"type": "object", "properties": {"description_tache_parent": {"type": "string", "description": "Description de la tâche parent."}, "description_sous_tache": {"type": "string", "description": "Description de la sous-tâche."}, "nouveau_statut": {"type": "string", "description": "Le nouveau statut de la sous-tâche."}}, "required": ["description_tache_parent", "description_sous_tache", "nouveau_statut"]}}},
-    {"type": "function", "function": {"name": "supprimer_sous_tache", "description": "Supprimer une sous-tâche d'une tâche parent.", "parameters": {"type": "object", "properties": {"description_tache_parent": {"type": "string", "description": "Description de la tâche parent."}, "description_sous_tache": {"type": "string", "description": "Description de la sous-tâche à supprimer."}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
+    {"type": "function", "function": {"name": "ajouter_sous_tache", "description": "Ajouter une sous-tâche à une tâche existante.", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent à laquelle ajouter la sous-tâche."}, "description_sous_tache": {"type": "STRING", "description": "Description de la nouvelle sous-tâche."}, "important": {"type": "BOOLEAN", "description": "La sous-tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La sous-tâche est-elle urgente ?"}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
+    {"type": "function", "function": {"name": "lister_sous_taches", "description": "Lister toutes les sous-tâches d'une tâche parent, triées par priorité.", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent dont on veut voir les sous-tâches."}}, "required": ["description_tache_parent"]}}},
+    {"type": "function", "function": {"name": "modifier_sous_tache", "description": "Modifier une sous-tâche existante (description, importance, urgence).", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent."}, "description_sous_tache_actuelle": {"type": "STRING", "description": "Description actuelle de la sous-tâche à modifier."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description de la sous-tâche."}, "nouvelle_importance": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'urgence."}}, "required": ["description_tache_parent", "description_sous_tache_actuelle"]}}},
+    {"type": "function", "function": {"name": "changer_statut_sous_tache", "description": "Changer le statut d'une sous-tâche (à faire, en cours, terminée).", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent."}, "description_sous_tache": {"type": "STRING", "description": "Description de la sous-tâche."}, "nouveau_statut": {"type": "STRING", "description": "Le nouveau statut de la sous-tâche."}}, "required": ["description_tache_parent", "description_sous_tache", "nouveau_statut"]}}},
+    {"type": "function", "function": {"name": "supprimer_sous_tache", "description": "Supprimer une sous-tâche d'une tâche parent.", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent."}, "description_sous_tache": {"type": "STRING", "description": "Description de la sous-tâche à supprimer."}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
     
     # Outils pour les Projets
     {"type": "function", "function": {"name": "lister_projets", "description": "Obtenir la liste de tous les projets avec leurs détails (ID, nom, description, calendrier_associe, emoji)."}},
-    {"type": "function", "function": {"name": "ajouter_projet", "description": "Créer un nouveau projet. Une description, un calendrier et un émoji peuvent être spécifiés.", "parameters": {"type": "object", "properties": {"nom": {"type": "string", "description": "Le nom du nouveau projet."}, "description": {"type": "string", "description": "Optionnel. Une description détaillée des objectifs du projet."}, "calendrier_associe": {"type": "string", "description": "Optionnel. Le nom du Google Calendar lié à ce projet."}, "emoji": {"type": "string", "description": "Optionnel. Un émoji unique pour représenter le projet (ex: '🚀')."}}, "required": ["nom"]}}},
-    {"type": "function", "function": {"name": "modifier_projet", "description": "Mettre à jour le nom, la description, le calendrier ou l'émoji d'un projet existant via son ID.", "parameters": {"type": "object", "properties": {"id_projet": {"type": "string", "description": "ID du projet à modifier."}, "nouveau_nom": {"type": "string", "description": "Optionnel. Le nouveau nom du projet."}, "nouvelle_description": {"type": "string", "description": "Optionnel. La nouvelle description complète du projet."}, "nouveau_calendrier": {"type": "string", "description": "Optionnel. Le nouveau nom du calendrier Google à associer."}, "nouvel_emoji": {"type": "string", "description": "Optionnel. Le nouvel émoji pour le projet."}}, "required": ["id_projet"]}}},
-    {"type": "function", "function": {"name": "supprimer_projet", "description": "Supprimer un projet.", "parameters": {"type": "object", "properties": {"nom": {"type": "string", "description": "Nom du projet à supprimer."}}, "required": ["nom"]}}},
+    {"type": "function", "function": {"name": "ajouter_projet", "description": "Créer un nouveau projet. Une description, un calendrier et un émoji peuvent être spécifiés.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Le nom du nouveau projet."}, "description": {"type": "STRING", "description": "Optionnel. Une description détaillée des objectifs du projet."}, "calendrier_associe": {"type": "STRING", "description": "Optionnel. Le nom du Google Calendar lié à ce projet."}, "emoji": {"type": "STRING", "description": "Optionnel. Un émoji unique pour représenter le projet (ex: '🚀')."}}, "required": ["nom"]}}},
+    {"type": "function", "function": {"name": "modifier_projet", "description": "Mettre à jour le nom, la description, le calendrier ou l'émoji d'un projet existant via son ID.", "parameters": {"type": "OBJECT", "properties": {"id_projet": {"type": "STRING", "description": "ID du projet à modifier."}, "nouveau_nom": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description complète du projet."}, "nouveau_calendrier": {"type": "STRING", "description": "Optionnel. Le nouveau nom du calendrier Google à associer."}, "nouvel_emoji": {"type": "STRING", "description": "Optionnel. Le nouvel émoji pour le projet."}}, "required": ["id_projet"]}}},
+    {"type": "function", "function": {"name": "supprimer_projet", "description": "Supprimer un projet.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Nom du projet à supprimer."}}, "required": ["nom"]}}},
 
     # Outils pour le Calendrier
     {"type": "function", "function": {"name": "lister_tous_les_calendriers", "description": "Obtenir la liste de tous les calendriers Google de l'utilisateur."}},
-    {"type": "function", "function": {"name": "lister_prochains_evenements", "description": "Obtenir les prochains événements. Peut chercher dans un calendrier spécifique ou dans tous.", "parameters": {"type": "object", "properties": {"nom_calendrier": {"type": "string", "description": "Optionnel. Le nom du calendrier à consulter."}}}}},
-    {"type": "function", "function": {"name": "creer_evenement_calendrier", "description": "Crée un nouvel événement. Si le titre correspond à une tâche existante, il utilisera intelligemment le calendrier du projet associé à cette tâche.", "parameters": {"type": "object", "properties": {"titre": {"type": "string", "description": "Titre de l'événement. Si cela correspond à une tâche, utilise sa description exacte."}, "date_heure_debut": {"type": "string", "description": "Date et heure de début au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}, "date_heure_fin": {"type": "string", "description": "Date et heure de fin au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}}, "required": ["titre", "date_heure_debut", "date_heure_fin"]}}},
-    {"type": "function", "function": {"name": "modifier_evenement_calendrier", "description": "Modifier un événement existant (titre, début, fin) via son ID.", "parameters": {"type": "object", "properties": {"event_id": {"type": "string", "description": "ID de l'événement à modifier."}, "nouveau_titre": {"type": "string", "description": "Optionnel. Le nouveau titre de l'événement."}, "nouvelle_date_heure_debut": {"type": "string", "description": "Optionnel. La nouvelle date et heure de début au format ISO 8601."}, "nouvelle_date_heure_fin": {"type": "string", "description": "Optionnel. La nouvelle date et heure de fin au format ISO 8601."}}, "required": ["event_id"]}}},
-    {"type": "function", "function": {"name": "supprimer_evenement_calendrier", "description": "Supprimer un événement du calendrier avec son ID.", "parameters": {"type": "object", "properties": {"event_id": {"type": "string", "description": "ID de l'événement à supprimer."}}, "required": ["event_id"]}}},
+    {"type": "function", "function": {"name": "lister_prochains_evenements", "description": "Obtenir les prochains événements. Peut chercher dans un calendrier spécifique ou dans tous.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Optionnel. Le nom du calendrier à consulter."}}}}},
+    {"type": "function", "function": {"name": "creer_evenement_calendrier", "description": "Crée un nouvel événement. Si le titre correspond à une tâche existante, il utilisera intelligemment le calendrier du projet associé. Si l'heure de fin n'est pas spécifiée, l'événement durera 1 heure.", "parameters": {"type": "OBJECT", "properties": {"titre": {"type": "STRING", "description": "Titre de l'événement. Utiliser la description exacte d'une tâche si possible."}, "date_heure_debut": {"type": "STRING", "description": "Date et heure de début au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}, "date_heure_fin": {"type": "STRING", "description": "Optionnel. Date et heure de fin au format ISO 8601. Par défaut, 1h après le début."}, "nom_calendrier_cible": {"type": "STRING", "description": "Optionnel. Si ce paramètre est fourni, l'événement sera créé dans ce calendrier spécifique, ignorant toute autre logique d'association."}}, "required": ["titre", "date_heure_debut"]}}},
+    {"type": "function", "function": {"name": "modifier_evenement_calendrier", "description": "Modifier un événement existant (titre, début, fin, calendrier) via son ID.", "parameters": {"type": "OBJECT", "properties": {"event_id": {"type": "STRING", "description": "ID de l'événement à modifier."}, "nouveau_titre": {"type": "STRING", "description": "Optionnel. Le nouveau titre de l'événement."}, "nouvelle_date_heure_debut": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure de début au format ISO 8601."}, "nouvelle_date_heure_fin": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure de fin au format ISO 8601."}, "nouveau_nom_calendrier": {"type": "STRING", "description": "Optionnel. Le nom du calendrier de destination pour déplacer l'événement."}}, "required": ["event_id"]}}},
+    {"type": "function", "function": {"name": "supprimer_evenement_calendrier", "description": "Supprimer un événement du calendrier avec son ID.", "parameters": {"type": "OBJECT", "properties": {"event_id": {"type": "STRING", "description": "ID de l'événement à supprimer."}}, "required": ["event_id"]}}},
+
+    # Outils pour la GESTION des CALENDRIERS
+    {"type": "function", "function": {"name": "creer_calendrier", "description": "Créer un tout nouveau calendrier.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Le nom du nouveau calendrier à créer."}}, "required": ["nom_calendrier"]}}},
+    {"type": "function", "function": {"name": "renommer_calendrier", "description": "Changer le nom d'un calendrier existant.", "parameters": {"type": "OBJECT", "properties": {"nom_actuel": {"type": "STRING", "description": "Le nom actuel du calendrier à renommer."}, "nouveau_nom": {"type": "STRING", "description": "Le nouveau nom pour le calendrier."}}, "required": ["nom_actuel", "nouveau_nom"]}}},
+    {"type": "function", "function": {"name": "supprimer_calendrier", "description": "Supprimer définitivement un calendrier. Cette action est irréversible.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Le nom du calendrier à supprimer."}}, "required": ["nom_calendrier"]}}},
 ]
 
 # Mapping complet des outils
@@ -70,8 +80,21 @@ available_functions = {
     "lister_projets": lister_projets, "ajouter_projet": ajouter_projet, "modifier_projet": modifier_projet, "supprimer_projet": supprimer_projet,
     "lister_prochains_evenements": lister_prochains_evenements, "creer_evenement_calendrier": creer_evenement_calendrier, "modifier_evenement_calendrier": modifier_evenement_calendrier, "supprimer_evenement_calendrier": supprimer_evenement_calendrier,
     "lister_tous_les_calendriers": lister_tous_les_calendriers,
+    "creer_calendrier": creer_calendrier, "renommer_calendrier": renommer_calendrier, "supprimer_calendrier": supprimer_calendrier,
 }
 
+# NOUVELLE FONCTION DE LOG SÉCURISÉE
+def _log_history(history: list) -> str:
+    """
+    Tente de convertir l'historique en JSON pour les logs.
+    En cas d'échec (objets non sérialisables), retourne un résumé sûr pour éviter un crash.
+    """
+    try:
+        # Tente la conversion normale
+        return json.dumps(history, indent=2, ensure_ascii=False)
+    except TypeError:
+        # En cas d'échec, on retourne une chaîne de caractères qui ne fera jamais planter le log
+        return f"L'historique contient {len(history)} messages (certains objets ne sont pas sérialisables en JSON)."
 
 def router_requete_utilisateur(historique_conversation: list):
     """
@@ -97,69 +120,90 @@ def router_requete_utilisateur(historique_conversation: list):
 
     try:
         # 2. Configuration du modèle Gemini
-        # On utilise le modèle le plus récent et performant comme demandé.
+        # On extrait la définition de la fonction de chaque outil, car c'est le format attendu par Gemini.
+        formatted_tools = [t['function'] for t in gemini_tools]
+        logger.debug(f"🛠️ OUTILS GEMINI FORMATÉS: {_log_history(formatted_tools)}")
+        
         model = genai.GenerativeModel(
             model_name="gemini-2.5-pro",
             system_instruction=system_prompt,
-            # On convertit notre liste d'outils au format que Gemini attend
-            tools=[tool['function'] for tool in tools]
+            # On utilise les outils fraîchement formatés
+            tools=formatted_tools
         )
         
         # 3. Boucle de conversation avec l'IA
-        # On envoie l'historique et on attend la réponse
-        logger.info("🧠 ROUTEUR (GEMINI): Envoi des informations à Google Gemini...")
+        logger.debug(f"💬 HISTORIQUE POUR GEMINI (avant appel): {_log_history(historique_pour_gemini)}")
         response = model.generate_content(historique_pour_gemini)
+        logger.debug(f"🤖 RÉPONSE BRUTE DE GEMINI: {response}")
         
-        # 4. Traitement de la réponse de l'IA (qui peut demander des outils)
-        while response.candidates[0].content.parts and response.candidates[0].content.parts[0].function_call:
+        response_candidate = response.candidates[0]
+        while response_candidate.content.parts and response_candidate.content.parts[0].function_call:
             # L'IA a demandé d'utiliser un ou plusieurs outils
-            function_calls = response.candidates[0].content.parts
+            function_calls_from_response = response_candidate.content.parts
             
-            # On ajoute la demande de l'IA à notre historique
-            historique_pour_gemini.append(response.candidates[0].content)
+            # On ajoute la demande de l'IA (le message 'model' avec le function_call) à notre historique
+            historique_pour_gemini.append(response_candidate.content)
             
-            tool_responses = []
+            # On prépare la liste des réponses d'outils pour Gemini
+            tool_response_parts = []
             
-            for function_call in function_calls:
-                call = function_call.function_call
-                function_name = call.name
-                args = dict(call.args)
+            for part in function_calls_from_response:
+                function_call = part.function_call
+                function_name = function_call.name
+                args = dict(function_call.args)
                 
                 logger.info(f"🛠️ OUTIL (GEMINI): L'IA demande l'exécution de '{function_name}' avec les arguments: {args}")
                 
-                # On exécute la fonction demandée
                 function_to_call = available_functions.get(function_name)
                 if function_to_call:
                     try:
-                        function_response = function_to_call(**args)
-                        # On prépare la réponse de l'outil pour la renvoyer à l'IA
-                        tool_responses.append({
-                            "tool_call_id": function_call.id,
-                            "role": "tool",
-                            "name": function_name,
-                            "content": json.dumps(function_response, ensure_ascii=False)
-                        })
+                        # On exécute la fonction
+                        function_response_data = function_to_call(**args)
+                        
+                        # VÉRIFICATION CRUCIALE : L'API Gemini attend un dictionnaire (objet JSON) pour le champ "response".
+                        # Si notre fonction retourne une simple liste (ex: lister_taches), on doit l'encapsuler
+                        # dans un dictionnaire pour être conforme.
+                        if isinstance(function_response_data, list):
+                            function_response_data = {"resultats": function_response_data}
+
+                        # On prépare la réponse au format que Gemini attend (une part par réponse)
+                        tool_response_parts.append(
+                            {'function_response': {
+                                'name': function_name,
+                                'response': function_response_data
+                                }
+                            }
+                        )
                     except Exception as e:
-                        logger.error(f"🔥 ERREUR: L'exécution de la fonction '{function_name}' a échoué: {e}")
-                        # On informe l'IA que l'outil a échoué
-                        tool_responses.append({
-                             "tool_call_id": function_call.id,
-                             "role": "tool",
-                             "name": function_name,
-                             "content": json.dumps({"erreur": str(e)}, ensure_ascii=False)
-                        })
+                        logger.error(f"🔥 ERREUR: L'exécution de la fonction '{function_name}' a échoué: {repr(e)}")
+                        tool_response_parts.append(
+                            {'function_response': {
+                                'name': function_name,
+                                'response': {'erreur': repr(e)}
+                                }
+                            }
+                        )
                 else:
                     logger.warning(f"⚠️ ATTENTION: L'IA a tenté d'appeler une fonction inconnue: {function_name}")
             
-            # On ajoute les réponses des outils à l'historique
-            historique_pour_gemini.append({'role': 'tool', 'parts': [json.dumps(r) for r in tool_responses]})
+            # On ajoute une seule entrée 'tool' à l'historique avec toutes les réponses
+            if tool_response_parts:
+                logger.debug(f"🔙 RÉPONSES OUTILS POUR GEMINI: {_log_history(tool_response_parts)}")
+                historique_pour_gemini.append({'role': 'tool', 'parts': tool_response_parts})
 
             # On renvoie les résultats à l'IA pour qu'elle puisse formuler une réponse finale
             logger.info("🧠 ROUTEUR (GEMINI): Envoi des résultats des outils à Google Gemini pour la synthèse finale...")
+            logger.debug(f"💬 HISTORIQUE POUR GEMINI (avant 2e appel): {_log_history(historique_pour_gemini)}")
             response = model.generate_content(historique_pour_gemini)
+            logger.debug(f"🤖 RÉPONSE BRUTE DE GEMINI (2e appel): {response}")
+            response_candidate = response.candidates[0]
 
         # 5. Réponse finale de l'IA (après les outils, ou directement)
-        final_response_text = response.text
+        # On accède directement au texte, ce qui est plus sûr et évite les erreurs d'attributs
+        final_response_text = ""
+        if response.candidates and response.candidates[0].content.parts:
+            final_response_text = "".join(part.text for part in response.candidates[0].content.parts)
+
         logger.info("✅ ROUTEUR (GEMINI): Réponse finale générée et prête à être envoyée.")
         
         # On met à jour l'historique principal pour le prochain tour
@@ -169,8 +213,8 @@ def router_requete_utilisateur(historique_conversation: list):
         return final_response_text
 
     except Exception as e:
-        logger.error(f"🔥 ERREUR: L'appel à l'API Google Gemini a échoué: {e}")
-        return f"Désolé, une erreur de communication avec l'IA est survenue: {e}"
+        logger.error(f"🔥 ERREUR DÉTAILLÉE: L'appel à l'API Google Gemini a échoué: {repr(e)}", exc_info=True)
+        return f"Désolé, une erreur de communication avec l'IA est survenue: {repr(e)}"
 
 
 def generer_analyse_situation():

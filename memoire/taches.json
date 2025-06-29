@@ -45,6 +45,21 @@
         "progression_sous_taches": null
     },
     {
+        "id": "ee0e983c-070e-4dc4-b614-61cd007401ff",
+        "description": "Stream Backroom",
+        "statut": "à faire",
+        "projet_id": "proj_faee39fd-6cc2-4f01-9c3a-9c50c844cd2c",
+        "date_creation": "2025-06-29T14:47:59.626608",
+        "date_modification": "2025-06-29T14:47:59.626625",
+        "important": true,
+        "urgent": true,
+        "priorite": "P1 : Urgent et Important (À faire)",
+        "nom_projet": "YounesSama",
+        "emoji_projet": "👾",
+        "resume_sous_taches": null,
+        "progression_sous_taches": null
+    },
+    {
         "id": "9a4fddc4-07b8-4e64-8b97-6ffe606391f8",
         "description": "Derusher stream backroom",
         "statut": "à faire",
@@ -56,6 +71,21 @@
         "priorite": "P2 : Important mais pas Urgent (À planifier)",
         "nom_projet": "YounesSama",
         "emoji_projet": "👾",
+        "resume_sous_taches": null,
+        "progression_sous_taches": null
+    },
+    {
+        "id": "6f455a31-484f-4bde-a9e5-30df8293fa55",
+        "description": "Arrêter la musique",
+        "statut": "à faire",
+        "projet_id": "proj_dc232c06-aa17-4015-80af-fcfbf6836beb",
+        "date_creation": "2025-06-28T02:16:36.784549",
+        "date_modification": "2025-06-28T02:16:36.784554",
+        "important": true,
+        "urgent": false,
+        "priorite": "P2 : Important mais pas Urgent (À planifier)",
+        "nom_projet": "Discipline",
+        "emoji_projet": "🧠",
         "resume_sous_taches": null,
         "progression_sous_taches": null
     },
@@ -163,11 +193,11 @@
         "emoji_projet": "🤖",
         "resume_sous_taches": {
             "total": 3,
-            "terminees": 0,
+            "terminees": 1,
             "en_cours": 0,
-            "a_faire": 3
+            "a_faire": 2
         },
-        "progression_sous_taches": 0,
+        "progression_sous_taches": 33,
         "sous_taches": [
             {
                 "id": "sous_556b547f-f435-494f-b9bb-d1079f73c248",
@@ -202,16 +232,16 @@
         ]
     },
     {
-        "id": "6f455a31-484f-4bde-a9e5-30df8293fa55",
-        "description": "Arrêter la musique",
+        "id": "89492031-1dd2-43e0-88ad-2f03cfccd0b4",
+        "description": "Ajouter le truc des conversions sur le site",
         "statut": "à faire",
-        "projet_id": "proj_dc232c06-aa17-4015-80af-fcfbf6836beb",
-        "date_creation": "2025-06-28T02:16:36.784549",
-        "date_modification": "2025-06-28T02:16:36.784554",
+        "projet_id": "c9d160d1-f3bf-44c8-9a20-e5a7f0e51e69",
+        "date_creation": "2025-06-29T16:47:07.227724",
+        "date_modification": "2025-06-29T16:47:07.227733",
         "important": true,
-        "urgent": false,
-        "priorite": "P2 : Important mais pas Urgent (À planifier)",
-        "nom_projet": "Discipline",
-        "emoji_projet": "🧠"
+        "urgent": true,
+        "priorite": "P1 : Urgent et Important (À faire)",
+        "nom_projet": "Sirius",
+        "emoji_projet": "💧"
     }
 ]

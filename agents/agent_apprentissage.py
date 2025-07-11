@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ # -*- coding: utf-8 -*-
 
 import logging
 from .agent_memoire import lire_donnees_json, ecrire_donnees_json

@@ -1,7 +1,7 @@
 # Bibliothèques de base pour l'IA et la conversation
 google-generativeai
 python-dotenv
-python-telegram-bot
+python-telegram-bot[job-queue]
 
 # Bibliothèques pour l'API Google Calendar
 google-api-python-client

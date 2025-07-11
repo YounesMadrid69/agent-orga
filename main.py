@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 import datetime
 from dateutil import parser # Pour parser les dates ISO plus facilement
 import asyncio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+# from apscheduler.schedulers.asyncio import AsyncIOScheduler # On le supprime
 import pytz # Pour gérer les fuseaux horaires
 
 # On charge les variables d'environnement (les clés API) tout au début.
@@ -235,16 +235,16 @@ async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"🔥 ERREUR: Le superviseur a rencontré une erreur inattendue: {e}", exc_info=True)
 
 
-# Nouvelle fonction pour démarrer le scheduler APRES l'initialisation du bot
-async def post_initialization(application: Application):
-    """
-    Cette fonction est appelée une fois que le bot est prêt et que la boucle
-    d'événements asyncio est en cours d'exécution.
-    """
-    logger.info("🤖 BOT: Le bot est prêt, démarrage du planificateur de tâches (scheduler)...")
-    if scheduler:
-        scheduler.start()
-        logger.info("✅ SCHEDULER: Le planificateur de tâches est démarré.")
+# La fonction post_initialization n'est plus nécessaire
+# async def post_initialization(application: Application):
+#     """
+#     Cette fonction est appelée une fois que le bot est prêt et que la boucle
+#     d'événements asyncio est en cours d'exécution.
+#     """
+#     logger.info("🤖 BOT: Le bot est prêt, démarrage du planificateur de tâches (scheduler)...")
+#     if scheduler:
+#         scheduler.start()
+#         logger.info("✅ SCHEDULER: Le planificateur de tâches est démarré.")
 
 # --- Configuration du Logging Robuste ---
 
@@ -543,19 +543,17 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
             history[:] = [system_message] + messages_recents
 
 
-# Déclaration du scheduler dans le scope global pour qu'il soit accessible
-# par post_initialization et main.
-scheduler: AsyncIOScheduler = None
+# La variable globale scheduler n'est plus nécessaire
+# scheduler: AsyncIOScheduler = None
 
 def main() -> None:
     """Démarre le bot et configure tout."""
     logger.info("🚀 Démarrage du bot...")
 
-    # On configure l'application Telegram en utilisant post_init
+    # On configure l'application Telegram
     application = (
         Application.builder()
         .token(os.getenv("TELEGRAM_BOT_TOKEN"))
-        .post_init(post_initialization)
         .build()
     )
 
@@ -563,13 +561,13 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # --- Configuration du planificateur (Superviseur) ---
-    global scheduler
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Paris"))
-    scheduler.add_job(suivi_intelligent, 'interval', minutes=2)
+    # --- Configuration du planificateur (Superviseur) avec le JobQueue intégré ---
+    job_queue = application.job_queue
+    # On planifie l'exécution de la fonction `suivi_intelligent` toutes les 2 minutes.
+    # Le job_queue s'occupera de fournir le 'context' nécessaire.
+    job_queue.run_repeating(suivi_intelligent, interval=120, first=10) # interval en secondes
     
-    # La ligne scheduler.start() est volontairement omise ici.
-    # Elle sera appelée par post_initialization.
+    logger.info("⏰ SUPERVISEUR: Planifié pour s'exécuter toutes les 2 minutes.")
 
     logger.info("👂 BOT: Le bot commence à écouter les messages...")
     application.run_polling()

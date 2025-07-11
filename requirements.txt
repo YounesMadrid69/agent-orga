@@ -8,7 +8,6 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 
-# Bibliothèques pour la gestion du temps et des tâches planifiées
+# Bibliothèques pour la gestion du temps
 pytz
-APScheduler
 python-dateutil

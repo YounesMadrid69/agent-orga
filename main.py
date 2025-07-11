@@ -235,6 +235,17 @@ async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"🔥 ERREUR: Le superviseur a rencontré une erreur inattendue: {e}", exc_info=True)
 
 
+# Nouvelle fonction pour démarrer le scheduler APRES l'initialisation du bot
+async def post_initialization(application: Application):
+    """
+    Cette fonction est appelée une fois que le bot est prêt et que la boucle
+    d'événements asyncio est en cours d'exécution.
+    """
+    logger.info("🤖 BOT: Le bot est prêt, démarrage du planificateur de tâches (scheduler)...")
+    if scheduler:
+        scheduler.start()
+        logger.info("✅ SCHEDULER: Le planificateur de tâches est démarré.")
+
 # --- Configuration du Logging Robuste ---
 
 # 1. On crée le logger principal qui va tout attraper
@@ -532,34 +543,37 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
             history[:] = [system_message] + messages_recents
 
 
+# Déclaration du scheduler dans le scope global pour qu'il soit accessible
+# par post_initialization et main.
+scheduler: AsyncIOScheduler = None
+
 def main() -> None:
-    """Démarre le bot et le planificateur de tâches."""
+    """Démarre le bot et configure tout."""
     logger.info("🚀 Démarrage du bot...")
-    
-    if not TELEGRAM_TOKEN:
-        logger.error("Erreur: Le TELEGRAM_BOT_TOKEN n'est pas configuré dans le fichier .env !")
-        return
 
-    # On crée l'application Telegram
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # On configure l'application Telegram en utilisant post_init
+    application = (
+        Application.builder()
+        .token(os.getenv("TELEGRAM_BOT_TOKEN"))
+        .post_init(post_initialization)
+        .build()
+    )
 
-    # --- Configuration du planificateur de tâches (Scheduler) ---
-    # On utilise le timezone de Paris pour que les heures soient correctes
-    scheduler = AsyncIOScheduler(timezone="Europe/Paris")
-    # On passe `application` en argument pour que notre fonction puisse utiliser le bot
-    scheduler.add_job(suivi_intelligent, 'interval', minutes=1, args=[application])
-    scheduler.start()
-    logger.info("⏰ Planificateur de tâches démarré. Vérification toutes les minutes.")
-
-    # On ajoute les gestionnaires de commandes (handlers)
+    # --- Ajout des gestionnaires de commandes ---
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # On lance le bot. Il tournera jusqu'à ce qu'on l'arrête (Ctrl+C)
-    logger.info("🚀 Le bot démarre en mode conversationnel...")
-    application.run_polling()
+    # --- Configuration du planificateur (Superviseur) ---
+    global scheduler
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Paris"))
+    scheduler.add_job(suivi_intelligent, 'interval', minutes=2)
     
-    logger.info("🛑 Bot arrêté.")
+    # La ligne scheduler.start() est volontairement omise ici.
+    # Elle sera appelée par post_initialization.
+
+    logger.info("👂 BOT: Le bot commence à écouter les messages...")
+    application.run_polling()
+
 
 if __name__ == '__main__':
     main()

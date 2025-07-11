@@ -267,31 +267,6 @@ log_central.addHandler(console_handler)
 # On utilise le logger configuré pour ce fichier. Les autres fichiers feront de même.
 logger = logging.getLogger(__name__)
 
-# --- Fonctions de démarrage et d'arrêt du planificateur (Scheduler) ---
-async def post_init(application: Application):
-    """
-    Fonction exécutée après l'initialisation du bot mais avant son démarrage.
-    C'est le bon endroit pour configurer et démarrer le planificateur de tâches.
-    """
-    logger.info("⚙️ SCHEDULER: Configuration et démarrage du planificateur de tâches.")
-    # On crée le planificateur avec le bon fuseau horaire
-    scheduler = AsyncIOScheduler(timezone="Europe/Paris")
-    # On ajoute la tâche récurrente du "Superviseur"
-    scheduler.add_job(suivi_intelligent, 'interval', seconds=60) # On vérifie toutes les 60 secondes
-    scheduler.start()
-    # On stocke le scheduler dans le contexte du bot pour pouvoir l'arrêter proprement plus tard
-    application.bot_data["scheduler"] = scheduler
-
-async def post_shutdown(application: Application):
-    """
-    Fonction exécutée juste avant l'arrêt du bot.
-    On arrête proprement le planificateur.
-    """
-    logger.info("⚙️ SCHEDULER: Arrêt du planificateur de tâches.")
-    if "scheduler" in application.bot_data:
-        application.bot_data["scheduler"].shutdown()
-
-
 # --- Configuration initiale ---
 
 # Charge les variables d'environnement (clés API)
@@ -558,37 +533,33 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
 
 
 def main() -> None:
-    """Lance le bot et configure le planificateur de tâches."""
+    """Démarre le bot et le planificateur de tâches."""
     logger.info("🚀 Démarrage du bot...")
     
-    # Récupération du token depuis les variables d'environnement
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_BOT_TOKEN:
-        logger.critical("🔥 ERREUR: Le TELEGRAM_BOT_TOKEN est manquant. Le bot ne peut pas démarrer.")
+    if not TELEGRAM_TOKEN:
+        logger.error("Erreur: Le TELEGRAM_BOT_TOKEN n'est pas configuré dans le fichier .env !")
         return
 
-    # Création de l'application Telegram
-    # C'est ici la correction : on utilise post_init et post_shutdown
-    # pour gérer le cycle de vie de notre planificateur.
-    application = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+    # On crée l'application Telegram
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Ajout des gestionnaires de commandes et de messages
+    # --- Configuration du planificateur de tâches (Scheduler) ---
+    # On utilise le timezone de Paris pour que les heures soient correctes
+    scheduler = AsyncIOScheduler(timezone="Europe/Paris")
+    # On passe `application` en argument pour que notre fonction puisse utiliser le bot
+    scheduler.add_job(suivi_intelligent, 'interval', minutes=1, args=[application])
+    scheduler.start()
+    logger.info("⏰ Planificateur de tâches démarré. Vérification toutes les minutes.")
+
+    # On ajoute les gestionnaires de commandes (handlers)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # On ne démarre PLUS le scheduler ici manuellement.
-    # L'application s'en charge via `post_init`.
 
-    # Lancement du bot
-    logger.info("▶️ Le bot est en écoute...")
+    # On lance le bot. Il tournera jusqu'à ce qu'on l'arrête (Ctrl+C)
+    logger.info("🚀 Le bot démarre en mode conversationnel...")
     application.run_polling()
-
+    
+    logger.info("🛑 Bot arrêté.")
 
 if __name__ == '__main__':
     main()

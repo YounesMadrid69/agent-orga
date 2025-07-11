@@ -4,21 +4,20 @@ Assistant personnel intelligent via Telegram qui gère vos tâches, projets et c
 
 ## 🚀 Fonctionnalités
 
-- ✅ Gestion intelligente des tâches avec priorités (matrice d'Eisenhower)
-- 📋 Organisation par projets avec émojis
-- 📅 Intégration Google Calendar
-- 🎯 Sous-tâches et suivi de progression
-- 🧠 Mémoire persistante : L'assistant apprend de vos conversations et se souvient de vos préférences, objectifs et décisions clés.
-- 💬 Interface conversationnelle naturelle via Telegram
-- 🤖 Intelligence propulsée par Google Gemini pour une compréhension avancée des demandes.
+- ✅ **Gestion de tâches** : Priorisation automatique (matrice d'Eisenhower), sous-tâches et suivi de progression.
+- 📋 **Organisation par projets** : Associez tâches et événements à des projets clairs avec des émojis.
+- 📅 **Intégration Google Calendar** : Synchronisation bidirectionnelle des tâches et des événements.
+- 🧠 **Mémoire Persistante** : L'assistant apprend de vos conversations et se souvient de vos préférences et objectifs.
+- 💬 **Interface Naturelle** : Dialoguez avec l'assistant via Telegram comme avec un humain.
+- 🤖 **IA Google Gemini** : Le dernier modèle de Google pour une compréhension fine de vos demandes.
 
 ## ⚙️ Variables d'environnement nécessaires
 
 - `TELEGRAM_BOT_TOKEN` : Token de votre bot Telegram
-- `GOOGLE_API_KEY` : Clé API pour Google Gemini (anciennement OPENAI_API_KEY).
-- `GOOGLE_CREDENTIALS_JSON` : Contenu du fichier credentials.json de Google Cloud (pour le déploiement).
-- `GOOGLE_TOKEN_JSON` : Contenu du fichier token.json généré (pour le déploiement).
+- `GOOGLE_API_KEY` : Votre clé API pour Google AI Studio (Gemini).
+- `GOOGLE_CREDENTIALS_JSON` : Le contenu de votre fichier `credentials.json` de Google Cloud, pour l'API Calendar.
+- `GOOGLE_TOKEN_JSON` : Le contenu du fichier `token.json` généré à la première connexion (pour le déploiement).
 
 ## 📦 Déploiement
 
-Ce projet est prêt pour Railway, Render ou Heroku. 
+Ce projet est prêt pour un déploiement sur des plateformes comme Railway, Render ou Heroku. 

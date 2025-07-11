@@ -120,6 +120,64 @@ def lister_prochains_evenements(nombre_evenements: int = 10, nom_calendrier: str
         logger.error(f"🔥 CALENDRIER: Erreur lors de la récupération des événements: {e}")
         return [{"erreur": str(e)}]
 
+def lister_evenements_passes(jours: int = 1) -> list:
+    """
+    Liste les événements terminés depuis le nombre de jours spécifié.
+    Par défaut, cherche les événements des dernières 24 heures.
+    """
+    log_msg = f"📅 CALENDRIER: Récupération des événements terminés depuis {jours} jour(s)."
+    logger.info(log_msg)
+    try:
+        creds = _get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+        
+        now = datetime.datetime.utcnow()
+        time_min = now - datetime.timedelta(days=jours)
+        
+        # Formatage pour l'API Google
+        time_min_iso = time_min.isoformat() + 'Z'
+        now_iso = now.isoformat() + 'Z'
+        
+        all_calendars = lister_tous_les_calendriers()
+        calendar_ids_to_check = [c['id'] for c in all_calendars]
+
+        all_events = []
+        for calendar_id in calendar_ids_to_check:
+            events_result = service.events().list(
+                calendarId=calendar_id, 
+                timeMin=time_min_iso,
+                timeMax=now_iso,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            events = events_result.get('items', [])
+            for event in events:
+                # On ajoute le nom du calendrier à chaque événement pour une utilisation ultérieure
+                event['calendar_summary'] = next((c['summary'] for c in all_calendars if c['id'] == calendar_id), 'Inconnu')
+            all_events.extend(events)
+
+        # Trier tous les événements par date de début
+        all_events.sort(key=lambda x: x['start'].get('dateTime', x['start'].get('date')))
+        
+        # On ne garde que les champs utiles
+        formatted_events = []
+        for event in all_events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            end = event['end'].get('dateTime', event['end'].get('date'))
+            formatted_events.append({
+                "id": event['id'],
+                "summary": event['summary'],
+                "start": start,
+                "end": end,
+                "calendar": event['calendar_summary']
+            })
+        return formatted_events
+
+    except Exception as e:
+        logger.error(f"🔥 CALENDRIER: Erreur lors de la récupération des événements passés: {e}")
+        return [{"erreur": str(e)}]
+
+
 def creer_evenement_calendrier(titre: str, date_heure_debut: str, date_heure_fin: str = None, nom_calendrier_cible: str = None) -> dict:
     """
     Crée un événement.
@@ -143,82 +201,35 @@ def creer_evenement_calendrier(titre: str, date_heure_debut: str, date_heure_fin
             logger.error(f"🔥 CALENDRIER: {msg}")
             return {"erreur": msg}
 
-    titre_final = titre  # On initialise le titre final
-    projet_associe = None  # Pour stocker le projet trouvé
-
-    # --- Logique d'Association Intelligente ---
-    if nom_calendrier_cible:
-        # Stratégie 0: Si un calendrier cible est forcé, on l'utilise.
-        logger.info(f"🧠 STRATÉGIE 0: Calendrier '{nom_calendrier_cible}' forcé par l'IA.")
-        projets = lister_projets()
-        # On cherche quand même le projet pour récupérer l'émoji, si possible.
-        projet_associe = next((p for p in projets if p.get('calendrier_associe') and p['calendrier_associe'].lower() == nom_calendrier_cible.lower()), None)
-    else:
-        # Si aucun calendrier n'est forcé, on lance la logique d'inférence.
-        # Stratégie 1: Chercher une tâche existante qui correspond exactement au titre.
-        taches = lister_taches()
-        tache_correspondante = next((t for t in taches if t['description'].lower() == titre.lower()), None)
-        
-        if tache_correspondante and tache_correspondante.get('projet_id'):
-            projets = lister_projets()
-            projet_associe = next((p for p in projets if p['id'] == tache_correspondante['projet_id']), None)
-            if projet_associe:
-                 logger.info(f"🧠 STRATÉGIE 1: Événement associé via la tâche exacte '{tache_correspondante['description']}'.")
-
-        # Stratégie 2: Si aucune tâche ne correspond, chercher par mots-clés dans les projets.
-        if not projet_associe:
-            projets = lister_projets()
-            mots_titre = set(titre.lower().split())
-            
-            for p in projets:
-                mots_projet = set(p.get('nom', '').lower().split())
-                mots_projet.update(p.get('description', '').lower().split())
-                
-                # Si on trouve une correspondance de mots-clés, on associe au projet.
-                if mots_titre.intersection(mots_projet):
-                    projet_associe = p
-                    logger.info(f"🧠 STRATÉGIE 2: Événement associé via le mot-clé commun dans le projet '{p['nom']}'.")
-                    break # On s'arrête au premier projet pertinent trouvé
-
-    # --- Application des résultats de l'association ---
-    nom_calendrier_final = None
-    if projet_associe:
-        # On récupère le calendrier associé s'il existe
-        if projet_associe.get('calendrier_associe'):
-            nom_calendrier_final = projet_associe['calendrier_associe']
-            logger.info(f"🎯 CALENDRIER CIBLE: Utilisation du calendrier '{nom_calendrier_final}' du projet '{projet_associe['nom']}'.")
-        
-        # On ajoute l'émoji du projet au titre de l'événement s'il existe
-        if projet_associe.get('emoji'):
-            titre_final = f"{projet_associe['emoji']} {titre}"
-            logger.info(f"🎨 ÉMOJI: Émoji '{projet_associe['emoji']}' ajouté au titre de l'événement.")
-    
-    # Si un calendrier cible a été forcé mais qu'on n'a pas trouvé de projet, on l'utilise quand même.
-    if nom_calendrier_cible and not nom_calendrier_final:
-        nom_calendrier_final = nom_calendrier_cible
+    # TOUTE LA LOGIQUE D'ASSOCIATION INTELLIGENTE EST SUPPRIMÉE D'ICI.
+    # C'est maintenant la responsabilité de l'IA (le conseiller) de choisir le bon calendrier
+    # et de fournir le bon titre (avec emoji).
 
     try:
         creds = _get_credentials()
         service = build('calendar', 'v3', credentials=creds)
         
         calendar_id = 'primary'  # Par défaut
-        if nom_calendrier_final:
+        if nom_calendrier_cible:
             all_calendars = lister_tous_les_calendriers()
-            target_calendar = next((c for c in all_calendars if nom_calendrier_final.lower() in c['summary'].lower()), None)
+            target_calendar = next((c for c in all_calendars if nom_calendrier_cible.lower() in c['summary'].lower()), None)
             if target_calendar:
                 calendar_id = target_calendar['id']
             else:
-                logger.warning(f"⚠️ CALENDRIER: Calendrier '{nom_calendrier_final}' non trouvé, utilisation du calendrier principal.")
+                msg = f"Le calendrier '{nom_calendrier_cible}' est introuvable."
+                logger.error(f"🔥 CALENDRIER: {msg}")
+                return {"erreur": "calendrier_non_trouve", "details": msg}
 
         event = {
-            'summary': titre_final,
+            'summary': titre,
             'start': {'dateTime': date_heure_debut, 'timeZone': 'Europe/Paris'},
             'end': {'dateTime': date_heure_fin, 'timeZone': 'Europe/Paris'},
         }
         
         created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
-        logger.info("✅ CALENDRIER: Événement '%s' créé avec succès.", titre_final)
-        return {"succes": f"Événement '{titre_final}' créé."}
+        logger.info("✅ CALENDRIER: Événement '%s' créé avec succès (ID: %s).", titre, created_event.get('id'))
+        # On retourne non seulement un succès, mais aussi l'ID de l'événement créé
+        return {"succes": f"Événement '{titre}' créé.", "event_id": created_event.get('id')}
     except Exception as e:
         logger.error(f"🔥 CALENDRIER: Erreur lors de la création de l'événement: {e}")
         return {"erreur": str(e)}
@@ -295,25 +306,34 @@ def modifier_evenement_calendrier(event_id: str, nouveau_titre: str = None, nouv
                 logger.info("L'événement est déjà dans le bon calendrier. Pas de déplacement nécessaire.")
 
         # Étape 4: Mettre à jour les autres détails de l'événement
-        modifications_a_appliquer = False
-        if nouveau_titre is not None:
+        modification_effectuee = False
+        if nouveau_titre:
             event_to_modify['summary'] = nouveau_titre
-            modifications_a_appliquer = True
-        if nouvelle_date_heure_debut is not None:
-            # La structure peut avoir 'dateTime' ou 'date', il faut préserver la bonne
-            if 'dateTime' in event_to_modify['start']:
-                 event_to_modify['start']['dateTime'] = nouvelle_date_heure_debut
-            else:
-                 event_to_modify['start']['date'] = nouvelle_date_heure_debut
-            modifications_a_appliquer = True
-        if nouvelle_date_heure_fin is not None:
+            modification_effectuee = True
+        
+        # On calcule la nouvelle date de fin AVANT de modifier l'événement
+        # si seule la date de début est fournie.
+        if nouvelle_date_heure_debut and not nouvelle_date_heure_fin:
+            try:
+                debut = datetime.datetime.fromisoformat(nouvelle_date_heure_debut.replace('Z', '+00:00'))
+                fin = debut + datetime.timedelta(hours=1)
+                nouvelle_date_heure_fin = fin.isoformat()
+                logger.info(f"💡 CALENDRIER: Heure de fin non fournie pour la modification. Fin recalculée pour durer 1h : {nouvelle_date_heure_fin}")
+            except ValueError:
+                pass # On laisse la logique existante échouer si le format est invalide
+
+        if nouvelle_date_heure_debut:
+            event_to_modify['start'] = {'dateTime': nouvelle_date_heure_debut, 'timeZone': 'Europe/Paris'}
+            modification_effectuee = True
+
+        if nouvelle_date_heure_fin:
             if 'dateTime' in event_to_modify['end']:
                 event_to_modify['end']['dateTime'] = nouvelle_date_heure_fin
             else:
                 event_to_modify['end']['date'] = nouvelle_date_heure_fin
-            modifications_a_appliquer = True
+            modification_effectuee = True
         
-        if modifications_a_appliquer:
+        if modification_effectuee:
             logger.info("Application des modifications de métadonnées (titre, date)...")
             updated_event = service.events().update(
                 calendarId=source_calendar_id,

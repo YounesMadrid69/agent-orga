@@ -2,6 +2,7 @@
 
 import os
 import json
+import re
 
 # --- Déploiement sur Railway : Création des fichiers d'authentification ---
 # On vérifie si les variables d'environnement pour Google existent.
@@ -26,6 +27,10 @@ import logging
 import logging.handlers # Nécessaire pour la rotation des logs
 from dotenv import load_dotenv
 import datetime
+from dateutil import parser # Pour parser les dates ISO plus facilement
+import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import pytz # Pour gérer les fuseaux horaires
 
 # On charge les variables d'environnement (les clés API) tout au début.
 # C'est la correction la plus importante pour que le bot puisse trouver les clés.
@@ -35,8 +40,200 @@ load_dotenv()
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Importation de notre nouveau routeur intelligent
+# Importation de notre nouveau routeur intelligent et des fonctions des agents
 from agents.agent_conseiller import router_requete_utilisateur, generer_contexte_complet
+from agents.agent_taches import lister_taches, modifier_tache
+# On importe les nouvelles fonctions dont le superviseur a besoin
+from agents.agent_calendrier import lister_evenements_passes
+from agents.agent_memoire import lire_evenements_suivis, ajouter_evenement_suivi
+from agents.agent_projets import lister_projets
+
+# Variable globale pour stocker le dernier chat_id actif (simplification pour le moment)
+dernier_chat_id_actif = None
+
+
+def normalize_calendar_name(name: str) -> str:
+    """
+    Normalise un nom de calendrier pour la comparaison :
+    - Supprime les emojis et de nombreux symboles.
+    - Met en minuscules.
+    - Supprime les espaces au début et à la fin.
+    """
+    if not name:
+        return ""
+    # Expression régulière pour supprimer une large gamme d'émojis et de symboles
+    # C'est une approche agressive pour maximiser les chances de correspondance.
+    try:
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            "\U00002500-\U00002BEF"  # chinese char
+            "\U00002702-\U000027B0"
+            "\U000024C2-\U0001F251"
+            "\U0001f926-\U0001f937"
+            "\U00010000-\U0010ffff"
+            "\u2640-\u2642"
+            "\u2600-\u2B55"
+            "\u200d"
+            "\u23cf"
+            "\u23e9"
+            "\u231a"
+            "\ufe0f"  # dingbats
+            "\u3030"
+            "]+",
+            flags=re.UNICODE,
+        )
+        # On supprime les emojis, puis les espaces superflus et on met en minuscule
+        return emoji_pattern.sub(r'', name).strip().lower()
+    except re.error:
+        # En cas d'erreur de regex, on fait un nettoyage simple
+        return ''.join(c for c in name if c.isalnum() or c.isspace()).strip().lower()
+
+# --- Nouvelle fonction de Suivi Intelligent (Le "Superviseur") ---
+async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Cette fonction est le "Superviseur". Elle vérifie les tâches et événements
+    et déclenche des messages proactifs via l'IA.
+    """
+    global dernier_chat_id_actif
+    if not dernier_chat_id_actif:
+        # On ne log que si on est en mode DEBUG pour ne pas polluer les logs
+        # logger.info("⏰ SUPERVISEUR: Pas de chat actif, aucun suivi à envoyer.")
+        return
+
+    logger.info(f"⏰ SUPERVISEUR: Vérification des suivis proactifs pour le chat ID {dernier_chat_id_actif}...")
+
+    try:
+        # --- 1. SUIVI DES TÂCHES EN RETARD ---
+        toutes_les_taches = lister_taches()
+        paris_tz = pytz.timezone("Europe/Paris")
+        maintenant = datetime.datetime.now(paris_tz)
+
+        for tache in toutes_les_taches:
+            # Condition 1: La tâche a une échéance, est toujours "à faire" et n'a pas eu de suivi
+            if tache.get("date_echeance") and tache.get("statut") == "à faire" and not tache.get("suivi_envoye"):
+                try:
+                    # On convertit la date d'échéance en objet datetime
+                    date_echeance = parser.isoparse(tache["date_echeance"])
+                    
+                    # Si la date est "naive", on la rend "aware" en lui assignant le fuseau de Paris
+                    if date_echeance.tzinfo is None or date_echeance.tzinfo.utcoffset(date_echeance) is None:
+                        date_echeance = paris_tz.localize(date_echeance)
+                    
+                    # Condition 2: L'échéance est passée
+                    if maintenant > date_echeance:
+                        logger.info(f"🧠 INITIATEUR: Tâche '{tache['description']}' en retard. Préparation du suivi.")
+                        
+                        # C'est ici l'intelligence : on crée un prompt pour l'IA
+                        prompt_initiateur = f"""
+                        L'utilisateur devait terminer la tâche suivante : "{tache['description']}", qui était due pour le {date_echeance.strftime('%d/%m à %H:%M')}.
+                        Cette échéance est maintenant dépassée.
+                        Rédige un message court, bienveillant et légèrement proactif pour l'utilisateur.
+                        Demande-lui où il en est et propose-lui de marquer la tâche comme 'terminée' pour lui s'il a fini.
+                        Sois naturel et n'utilise pas un ton robotique ou répétitif.
+                        """
+                        
+                        # On simule une conversation initiée par le bot
+                        historique_proactif = [
+                            {"role": "system", "content": generer_contexte_complet(datetime.datetime.now(pytz.timezone("Europe/Paris")).strftime('%Y-%m-%d %H:%M:%S'))},
+                            {"role": "user", "content": prompt_initiateur}
+                        ]
+                        
+                        # On appelle directement le routeur pour générer la réponse
+                        reponse_ia = router_requete_utilisateur(historique_proactif)
+                        
+                        # On envoie le message généré par l'IA à l'utilisateur
+                        await context.bot.send_message(chat_id=dernier_chat_id_actif, text=reponse_ia, parse_mode='HTML')
+                        logger.info(f"✅ SUIVI ENVOYÉ: Message de suivi pour la tâche '{tache['description']}' envoyé.")
+
+                        # On marque la tâche pour ne plus la notifier
+                        modifier_tache(description_actuelle=tache['description'], suivi_envoye=True)
+                        logger.info(f"💾 TÂCHE MISE À JOUR: Le suivi pour '{tache['description']}' est marqué comme envoyé.")
+                        
+                except (parser.ParserError, TypeError) as e:
+                    logger.warning(f"⚠️ SUPERVISEUR: Impossible de parser la date d'échéance '{tache.get('date_echeance')}' pour la tâche '{tache.get('description')}'. Erreur: {e}")
+                    continue
+
+        # --- 2. NOUVEAU : SUIVI DES ÉVÉNEMENTS TERMINÉS ---
+        logger.info("⏰ SUPERVISEUR: Vérification des événements terminés...")
+        evenements_passes = lister_evenements_passes(jours=1) # On regarde les dernières 24h
+        logger.debug(f"SUPERVISEUR_DEBUG: Événements passés trouvés: {[e['summary'] for e in evenements_passes]}")
+
+        evenements_deja_suivis = lire_evenements_suivis()
+        logger.debug(f"SUPERVISEUR_DEBUG: Événements déjà suivis: {evenements_deja_suivis}")
+
+        projets = lister_projets()
+
+        # On crée un mapping normalisé pour trouver facilement les infos d'un projet.
+        projet_par_calendrier = {
+            normalize_calendar_name(p.get('calendrier_associe', '')): p 
+            for p in projets if p.get('calendrier_associe')
+        }
+        logger.info(f"SUPERVISEUR_DEBUG: Mapping Calendrier->Projet disponible pour: {list(projet_par_calendrier.keys())}")
+
+        for event in evenements_passes:
+            logger.info(f"SUPERVISEUR: --- Traitement de l'événement: '{event['summary']}' (ID: {event['id']}) ---")
+            
+            # Condition 1: L'événement n'a pas déjà été suivi
+            if event['id'] in evenements_deja_suivis:
+                logger.info(f"SUPERVISEUR_RESULTAT: -> Ignoré (déjà suivi).")
+                continue
+
+            # Condition 2: L'événement est lié à un projet qui a le suivi activé
+            # On normalise le nom du calendrier de l'événement pour la recherche
+            nom_calendrier_normalise = normalize_calendar_name(event['calendar'])
+            logger.info(f"SUPERVISEUR_ETAPE: Calendrier de l'événement: '{event['calendar']}'. Nom normalisé: '{nom_calendrier_normalise}'")
+            
+            projet_associe = projet_par_calendrier.get(nom_calendrier_normalise)
+            
+            if not projet_associe:
+                logger.info(f"SUPERVISEUR_RESULTAT: -> Ignoré (aucun projet associé trouvé pour ce calendrier).")
+                continue
+            
+            logger.info(f"SUPERVISEUR_ETAPE: -> Projet associé trouvé: '{projet_associe['nom']}'.")
+            
+            suivi_actif = projet_associe.get('suivi_proactif_active')
+            logger.info(f"SUPERVISEUR_ETAPE: -> Statut du suivi proactif pour ce projet: {suivi_actif}")
+            
+            if projet_associe and suivi_actif:
+                logger.info(f"🧠 INITIATEUR: Événement '{event['summary']}' terminé. Préparation du suivi proactif.")
+
+                # On crée un prompt pour que l'IA demande comment ça s'est passé
+                prompt_initiateur = f"""
+                L'événement "{event['summary']}" (du projet "{projet_associe['nom']}" {projet_associe['emoji']}) vient de se terminer.
+                Ton rôle de coach proactif est de maintenir l'élan de l'utilisateur.
+
+                Ta mission :
+                1.  **Réagis de façon naturelle et encourageante** à la fin de la séance. Varie tes introductions pour ne pas être répétitif.
+                2.  **Analyse EN SILENCE** l'objectif du projet ("{projet_associe['description']}"). pas besoin de répéter cet objectif à l'utilisateur. Il le connaît. Utilise cette information uniquement pour déduire la meilleure prochaine étape.
+                3.  **Identifie et propose la prochaine étape** logique pour ce projet.
+                4.  **Sois un véritable assistant :** Propose un créneau PRÉCIS pour cette étape après avoir consulté l'agenda de l'utilisateur (disponible dans ton contexte). Sois force de proposition.
+
+                Le ton doit être celui d'un coach partenaire, pas d'un robot. Concis, pertinent et inspirant.
+                """
+
+                historique_proactif = [
+                    {"role": "system", "content": generer_contexte_complet(datetime.datetime.now(pytz.timezone("Europe/Paris")).strftime('%Y-%m-%d %H:%M:%S'))},
+                    {"role": "user", "content": prompt_initiateur}
+                ]
+                
+                reponse_ia = router_requete_utilisateur(historique_proactif)
+                
+                # On envoie le message généré par l'IA à l'utilisateur
+                # CORRECTION: On utilise context.bot.send_message, pas une autre méthode.
+                await context.bot.send_message(chat_id=dernier_chat_id_actif, text=reponse_ia, parse_mode='HTML')
+                logger.info(f"✅ SUIVI ENVOYÉ: Message de suivi pour l'événement '{event['summary']}' envoyé.")
+
+                # On marque l'événement comme suivi pour ne plus le notifier
+                ajouter_evenement_suivi(event['id'])
+                logger.info(f"💾 ÉVÉNEMENT MIS À JOUR: Le suivi pour '{event['summary']}' (ID: {event['id']}) est marqué comme envoyé.")
+
+    except Exception as e:
+        logger.error(f"🔥 ERREUR: Le superviseur a rencontré une erreur inattendue: {e}", exc_info=True)
+
 
 # --- Configuration du Logging Robuste ---
 
@@ -60,7 +257,7 @@ file_handler.setFormatter(formatter)
 
 # 5. On configure ce qui s'affiche dans la console (pour garder un œil en direct)
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO) # On ne montre que les infos importantes dans la console pour ne pas être noyé.
+console_handler.setLevel(logging.DEBUG) # On ne montre que les infos importantes dans la console pour ne pas être noyé.
 console_handler.setFormatter(formatter)
 
 # 6. On branche nos deux "micros" (fichier et console) sur le logger central
@@ -92,23 +289,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Gère tous les messages en utilisant le routeur et un historique de conversation."""
+    global dernier_chat_id_actif
     # On s'assure de ne pas traiter les messages provenant d'un bot (y compris lui-même)
     if update.message.from_user.is_bot:
         return
         
     chat_id = update.effective_chat.id
+    dernier_chat_id_actif = chat_id # On sauvegarde le dernier chat ID actif
     message_text = update.message.text
+    
+    # On calcule la date et l'heure actuelles ICI, pour qu'elles soient fraîches à chaque message.
+    date_actuelle = datetime.datetime.now(pytz.timezone("Europe/Paris")).strftime('%Y-%m-%d %H:%M:%S')
     
     # On définit le prompt système ici pour qu'il soit toujours à jour à chaque message.
     # C'est la garantie que les nouvelles règles sont appliquées instantanément.
     system_prompt = {"role": "system", "content": f"""
 Tu es Orga, un assistant personnel d'exception. Ta mission est de rendre la vie de l'utilisateur plus simple et organisée, avec une touche humaine et inspirante.
 
-{generer_contexte_complet()}
+{generer_contexte_complet(date_actuelle)}
 
 # Ta Personnalité & Ton Style :
 - <b>Chaleureux et Encourageant :</b> Tu es un partenaire de confiance. Utilise un ton positif et légèrement informel. Adresse-toi à l'utilisateur avec bienveillance.
-- <b>Visuel et Structuré :</b> Ta communication doit être facile à lire et esthétique. Utilise le formatage HTML pour mettre en valeur les informations importantes.
+- <b>Garder la Conversation Ouverte :</b> Après avoir confirmé une action, ne termine jamais la conversation avec des phrases comme "Bonne journée" ou "Passez une bonne soirée". Conclus toujours en demandant s'il y a autre chose que tu peux faire, par exemple : "Y a-t-il autre chose pour vous aider ?" ou "Je reste à votre disposition.".
+
+# Ton Style de Conversation :
+- <b>Fluidité et Contexte :</b> C'est ta priorité absolue. Lis toujours les derniers messages de la conversation avant de répondre. Ta réponse doit être une suite logique, pas un nouveau départ.
+- <b>Sois Concis :</b> Évite les phrases de remplissage. Ne répète pas les objectifs des projets que l'utilisateur connaît déjà. Va droit au but.
+- <b>Prouve ta mémoire et ta connaissance:</b> Fais subtilement référence aux sujets précédents pour montrer que tu suis la conversation. Par exemple : "Pour faire suite à ce que nous disions sur le projet X...", "Comme tu as bientôt Y...". Pareil pour les projets, les tâches, les événements, etc. Tu es au courant de tout et tu dois aider l'utilisateur dans son organisation et réussite de ses projets.
+- <b>Naturel avant tout :</b> Parle comme un humain, pas comme une documentation.
 
 # Tes Règles de Formatage (HTML pour Telegram)
 - <b>Gras &lt;b&gt; :</b> Utilise `<b>...</b>` pour les titres de section et pour faire ressortir les éléments clés (noms de projets, priorités, etc.).
@@ -156,6 +364,17 @@ Tu es Orga, un assistant personnel d'exception. Ta mission est de rendre la vie 
     - `Toi (BONNE RÉPONSE):` "Bien sûr ! À quelle heure souhaitez-vous planifier la 'Réunion avec le client' demain ?"
     - `Toi (MAUVAISE RÉPONSE):` "OK, j'ai créé l'événement pour demain à 10h." -> <b>INTERDIT</b>
 
+# Règle de Synchronisation Tâche-Calendrier (Très Important !)
+- <b>Principe fondamental :</b> Le système synchronise automatiquement les tâches avec le calendrier.
+- <b>Ton rôle :</b> Pour créer ou modifier une tâche qui a une date (en utilisant `ajouter_tache` ou `modifier_tache`), tu ne dois PAS appeler en plus `creer_evenement_calendrier` ou `modifier_evenement_calendrier`. Appelle SEULEMENT l'outil de gestion de la tâche. Le système s'occupe du reste.
+- <b>Idem pour la suppression :</b> Si tu supprimes une tâche qui était liée à un événement, l'événement sera automatiquement supprimé. Ne demande JAMAIS à l'utilisateur de confirmer la suppression de l'événement.
+- <b>Exemple de ce qu'il NE FAUT PAS FAIRE :</b>
+    - `Utilisateur:` "Change la tâche 'Réunion' à demain 10h."
+    - `Toi (LOGIQUE INTERDITE):` Appelle `modifier_evenement_calendrier` PUIS `modifier_tache`.
+- <b>Exemple de ce qu'il FAUT FAIRE :</b>
+    - `Utilisateur:` "Change la tâche 'Réunion' à demain 10h."
+    - `Toi (BONNE LOGIQUE):` Appelle SEULEMENT `modifier_tache`. Le calendrier sera mis à jour automatiquement.
+
 # Le Principe de Zéro Supposition : Demander avant d'agir
 - <b>Demande de Précision Systématique :</b> De manière générale, si une demande de l'utilisateur est vague, ambiguë, ou s'il te manque une information cruciale pour utiliser un outil (une date, une heure, un nom précis), ton réflexe absolu doit être de poser une question pour obtenir la précision manquante. Ne suppose jamais et n'hallucine aucune information.
 - <b>Ta Règle d'Or n°2 :</b> Quand tu dois créer un nouvel élément (projet, tâche...) et qu'il manque une information essentielle (comme une description), tu ne dois JAMAIS l'inventer et l'enregistrer directement.
@@ -191,6 +410,17 @@ Tu es Orga, un assistant personnel d'exception. Ta mission est de rendre la vie 
     - Quand tu listes les tâches, explique brièvement le sens de leur priorité. Par exemple : "En tête de liste, tu as une tâche P1, c'est-à-dire urgente et importante. C'est sans doute par là qu'il faut commencer."
 - <b>Expertise Discrète :</b> Tu es un expert en organisation, mais ne sois pas pédant. Glisse tes conseils naturellement dans la conversation. Si une tâche semble trop grosse, suggère de la découper.
 
+# Ton Principe d'Action ULTIME : La Proactivité Stratégique
+- **Ton but n'est pas d'être un simple exécutant, mais un stratège.** Ne te contente JAMAIS de répondre à une question. Tu dois toujours anticiper la suite.
+- **Ta boucle de pensée permanente doit être :**
+    1.  **Action Immédiate :** Je réponds à la demande actuelle de l'utilisateur.
+    2.  **Analyse Contextuelle :** Quel est le projet concerné ? Quel est son objectif final (défini dans sa "description") ?
+    3.  **Anticipation Stratégique :** Quelle est la PROCHAINE ÉTAPE la plus logique et intelligente pour faire avancer ce projet vers son but ?
+    4.  **Proposition Proactive :** Je propose à l'utilisateur de planifier cette étape. Je consulte son calendrier (`lister_prochains_evenements`) pour lui suggérer des créneaux pertinents et l'aider à organiser son temps.
+- **Exemple de Mission Accomplie :**
+    - `Utilisateur:` "La V2 du site pour Woodcoq est terminée."
+    - `Toi (Réponse ATTENDUE):` "Félicitations, c'est une étape majeure pour le projet Woodcoq ! 🪵 La prochaine étape logique serait de lancer une petite campagne marketing pour annoncer cette nouveauté. J'ai regardé ton calendrier, tu as un créneau demain à 14h. Veux-tu qu'on y planifie une session de travail sur la campagne ?"
+
 - <b>Confirmation Explicite des Actions :</b> Ta réponse DOIT être le reflet direct du résultat de tes outils.
     - Si un outil (comme `ajouter_tache` ou `creer_evenement_calendrier`) réussit et renvoie un message de succès (ex: `{{"succes": "Tâche ajoutée"}}`), tu confirmes l'action à l'utilisateur.
     - Si l'outil renvoie une erreur (ex: `{{"erreur": "Projet non trouvé"}}`), tu DOIS informer l'utilisateur de l'échec et lui expliquer le problème.
@@ -207,6 +437,46 @@ Tu es Orga, un assistant personnel d'exception. Ta mission est de rendre la vie 
 - <b>Un Projet = Un Objectif :</b> Pour toi, la "description" d'un projet est sa mission, son but. C'est l'information la plus importante.
 - <b>Le Chasseur d'Informations Manquantes :</b> Si tu découvres qu'un projet n'a pas de description, cela doit devenir ta priorité. Signale-le immédiatement à l'utilisateur et explique-lui pourquoi c'est important.
 - <b>Proactivité sur les Calendriers :</b> Quand un utilisateur crée un projet, tu dois vérifier s'il est lié à un calendrier. Si ce n'est pas le cas, tu dois systématiquement lui demander s'il souhaite créer un nouveau calendrier portant le nom de ce projet pour y organiser les événements associés.
+
+# Gestion des Erreurs d'Outils
+- <b>Calendrier Inexistant :</b> Si tu essaies de créer un événement et que l'outil te retourne une erreur `calendrier_non_trouve`, tu DOIS demander à l'utilisateur s'il souhaite que tu crées ce calendrier. Si la réponse est oui, utilise l'outil `creer_calendrier`.
+
+# La Règle d'Or Finale : La Confirmation
+- <b>Toujours Confirmer :</b> Après chaque action réussie (tâche ajoutée, événement créé, etc.), tu dois toujours terminer ta réponse par un résumé concis de ce que tu as fait et où tu l'as fait (quel projet, quel calendrier).
+
+# Ta Logique d'Association Événement-Calendrier (Très Important)
+- <b>Ton Objectif : Être Intelligent.</b> Ta mission est de placer chaque événement dans le calendrier le plus pertinent possible en te basant sur le CONTEXTE COMPLET que tu possèdes (liste des projets, leurs noms, et surtout leurs descriptions).
+- <b>Processus de Réflexion :</b>
+    1.  <b>Analyse Sémantique :</b> Quand une tâche datée est créée, ne te contente pas des mots-clés. Comprends le *sens* de la tâche. "Rendez-vous dentiste" est une tâche personnelle. "Finaliser le logo" est une tâche créative. "Réunion client" est une tâche professionnelle.
+    2.  <b>Correspondance de Projet :</b> Compare le sens de la tâche avec la *description* de chaque projet. Le projet "自由" (Jiyuu) concerne la vie personnelle. Le projet "Kawn Studio" concerne le design.
+    3.  <b>Décision :</b> Choisis le calendrier du projet qui correspond le mieux. Quand tu appelles `creer_evenement_calendrier`, utilise le paramètre `nom_calendrier_cible` avec le nom du calendrier que tu as choisi.
+    4.  <b>Enrichissement du Titre :</b> Si tu associes un événement à un projet qui a un émoji, ajoute cet émoji au début du titre de l'événement.
+- <b>Le Principe d'Incertitude : Demander en dernier recours.</b>
+    - **Ne demande PAS par défaut.** Ton rôle est d'être autonome.
+    - **Demande SEULEMENT si tu es VRAIMENT incertain.** Si une tâche pourrait logiquement appartenir à deux projets, ou à aucun, ALORS et seulement alors, tu dois demander à l'utilisateur.
+    - **Exemple de bonne question :** "J'ai créé la tâche 'Brainstorming'. Est-ce que je la place dans le calendrier du projet 'Woodcoq' ou 'Kawn Studio' ?"
+- <b>Le Cas par Défaut (Si aucun projet ne correspond) :</b> Si une tâche est vraiment générique (ex: "Appeler maman") et ne correspond à aucun projet, tu n'as pas besoin de spécifier de calendrier. L'événement sera automatiquement placé dans le calendrier principal de l'utilisateur.
+
+# Détection de Conflits et Duplicatas (Intelligence Supérieure)
+- **Principe : Éviter les doublons.** Avant de créer un nouvel événement, tu dois vérifier s'il n'existe pas déjà un événement similaire.
+- **Processus de Vérification OBLIGATOIRE :**
+    1.  Quand on te demande de créer une tâche datée, tu dois d'abord utiliser l'outil `lister_prochains_evenements` pour voir le planning de la journée concernée.
+    2.  Analyse la liste : cherche des événements avec un nom très similaire ou dont les horaires se chevauchent.
+    3.  **Si un conflit potentiel est détecté :** Tu dois le signaler à l'utilisateur et demander confirmation avant de créer le nouvel événement.
+    - **Exemple de Conflit :**
+        - `Contexte:` Il y a déjà un événement "Rendez-vous médical" à 15h.
+        - `Utilisateur:` "Ajoute 'Rendez-vous dentiste' pour 15h30."
+        - `Toi (BONNE RÉPONSE):` "Je vois que vous avez déjà un 'Rendez-vous médical' à 15h. Êtes-vous sûr de vouloir ajouter 'Rendez-vous dentiste' à 15h30 ?"
+- **Si aucun conflit n'est détecté**, tu peux procéder à la création de l'événement directement.
+
+# Gestion du Contexte sur Plusieurs Tours (Mémoire à court terme)
+- <b>Principe fondamental :</b> Quand tu poses une question pour obtenir une précision (comme la priorité d'une tâche), tu dois absolument te souvenir de TOUTES les informations de la demande initiale de l'utilisateur.
+- <b>Scénario type :</b>
+    1. `Utilisateur:` "Ajoute la tâche 'Payer les factures' pour vendredi à 17h."
+    2. `Toi:` "Bien sûr. Est-ce une tâche importante ?"
+    3. `Utilisateur:` "Oui."
+- <b>Ta logique attendue :</b> Quand l'utilisateur répond "Oui", tu dois te souvenir de la description ('Payer les factures') ET de la date ('vendredi à 17h'). Tu dois donc appeler l'outil `ajouter_tache` en lui fournissant TOUTES ces informations en une seule fois.
+- <b>Logique INTERDITE :</b> Il est interdit de d'abord créer la tâche sans la date, puis de la modifier. Tu dois rassembler toutes les informations avant d'appeler l'outil de création une seule fois.
 
 # Information contextuelle :
 La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
@@ -231,6 +501,9 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
     # Le routeur va modifier la liste "history" en y ajoutant les réponses de l'IA.
     response_text = router_requete_utilisateur(history)
     
+    # On envoie la réponse finale à l'utilisateur
+    await update.message.reply_html(response_text)
+    
     # On limite la taille de l'historique pour ne pas surcharger la mémoire et l'API
     # en utilisant une méthode intelligente qui préserve l'intégrité des conversations.
     MAX_MESSAGES = 20
@@ -252,33 +525,41 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
                 break
         
         # On reconstruit un historique propre
-        conversation_histories[chat_id] = [system_message] + messages_recents[premier_index_sain:]
-        logger.info("✅ MÉMOIRE: Nettoyage terminé. Nouvel historique de %d messages.", len(conversation_histories[chat_id]))
+        if premier_index_sain > 0:
+            history[:] = [system_message] + messages_recents[premier_index_sain:]
+        else:
+            # Si aucun message utilisateur n'est trouvé, on garde quand même une base saine.
+            history[:] = [system_message] + messages_recents
 
-    # On envoie la réponse finale à l'utilisateur
-    await update.message.reply_html(response_text)
-
-
-# --- Lancement du bot ---
 
 def main() -> None:
-    """Démarre le bot et le fait tourner jusqu'à ce qu'on l'arrête."""
+    """Démarre le bot et le planificateur de tâches."""
+    logger.info("🚀 Démarrage du bot...")
+    
     if not TELEGRAM_TOKEN:
         logger.error("Erreur: Le TELEGRAM_BOT_TOKEN n'est pas configuré dans le fichier .env !")
         return
 
+    # On crée l'application Telegram
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # On ajoute le handler pour la commande /start
+    # --- Configuration du planificateur de tâches (Scheduler) ---
+    # On utilise le timezone de Paris pour que les heures soient correctes
+    scheduler = AsyncIOScheduler(timezone="Europe/Paris")
+    # On passe `application` en argument pour que notre fonction puisse utiliser le bot
+    scheduler.add_job(suivi_intelligent, 'interval', minutes=1, args=[application])
+    scheduler.start()
+    logger.info("⏰ Planificateur de tâches démarré. Vérification toutes les minutes.")
+
+    # On ajoute les gestionnaires de commandes (handlers)
     application.add_handler(CommandHandler("start", start))
-    
-    # On ajoute le handler principal pour TOUS les messages texte qui ne sont pas des commandes
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # On lance le bot. Il tournera jusqu'à ce qu'on l'arrête (Ctrl+C)
     logger.info("🚀 Le bot démarre en mode conversationnel...")
-    # On utilise run_polling avec stop_signals=None pour Railway
-    application.run_polling(stop_signals=None)
-
+    application.run_polling()
+    
+    logger.info("🛑 Bot arrêté.")
 
 if __name__ == '__main__':
     main()

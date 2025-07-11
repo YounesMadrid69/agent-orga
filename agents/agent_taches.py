@@ -21,11 +21,12 @@ def _calculer_priorite(important: bool, urgent: bool) -> str:
     else:
         return "P4 : Ni Urgent, ni Important (À abandonner/reporter)"
 
-def ajouter_tache(description: str, nom_projet: str = None, important: bool = False, urgent: bool = False) -> dict:
+def ajouter_tache(description: str, nom_projet: str = None, important: bool = False, urgent: bool = False, date_echeance: str = None) -> dict:
     """
     Ajoute une nouvelle tâche. Si un nom de projet est fourni,
     tente de lier la tâche au projet correspondant.
     Calcule la priorité en fonction de l'importance et de l'urgence.
+    Accepte une date d'échéance optionnelle au format ISO (YYYY-MM-DDTHH:MM:SS).
     """
     logger.info("💾 TÂCHES: Tentative d'ajout de la tâche '%s'.", description)
     taches = lister_taches()
@@ -44,9 +45,12 @@ def ajouter_tache(description: str, nom_projet: str = None, important: bool = Fa
         'projet_id': projet_id,
         'date_creation': datetime.now().isoformat(),
         'date_modification': datetime.now().isoformat(),
+        'date_echeance': date_echeance, # Nouveau champ
         'important': important,
         'urgent': urgent,
-        'priorite': _calculer_priorite(important, urgent)
+        'priorite': _calculer_priorite(important, urgent),
+        'suivi_envoye': False, # Nouveau champ pour la proactivité
+        'google_calendar_event_id': None # Pour la synchronisation avec le calendrier
     }
     taches.append(nouvelle_tache)
     ecrire_donnees_json(NOM_FICHIER_TACHES, taches)
@@ -149,11 +153,10 @@ def _trouver_tache(description_tache: str, taches: list) -> dict:
             return tache
     return None
 
-def modifier_tache(description_actuelle: str, nouvelle_description: str = None, nom_projet: str = None, nouvelle_importance: bool = None, nouvelle_urgence: bool = None) -> dict:
+def modifier_tache(description_actuelle: str, nouvelle_description: str = None, nom_projet: str = None, nouvelle_importance: bool = None, nouvelle_urgence: bool = None, nouvelle_date_echeance: str = None, suivi_envoye: bool = None) -> dict:
     """
-    Modifie la description d'une tâche, son projet, son importance ou son urgence.
-    La tâche est identifiée par sa description actuelle.
-    La priorité est recalculée si l'importance ou l'urgence change.
+    Modifie une tâche. La tâche est identifiée par sa description actuelle.
+    Permet de changer la description, le projet, l'importance, l'urgence, la date d'échéance ou le statut du suivi.
     """
     logger.info("💾 TÂCHES: Tentative de modification de la tâche '%s'.", description_actuelle)
     taches = lister_taches()
@@ -175,6 +178,15 @@ def modifier_tache(description_actuelle: str, nouvelle_description: str = None, 
         if not projet_cible:
             return {"erreur": f"Projet '{nom_projet}' non trouvé."}
         tache_a_modifier['projet_id'] = projet_cible['id']
+        modifications_faites = True
+
+    if nouvelle_date_echeance is not None:
+        tache_a_modifier['date_echeance'] = nouvelle_date_echeance
+        tache_a_modifier['suivi_envoye'] = False # On ré-arme le suivi !
+        modifications_faites = True
+
+    if suivi_envoye is not None:
+        tache_a_modifier['suivi_envoye'] = suivi_envoye
         modifications_faites = True
 
     # Gestion de l'importance et de l'urgence
@@ -221,7 +233,10 @@ def changer_statut_tache(description_tache: str, nouveau_statut: str) -> dict:
     return tache_a_modifier
 
 def supprimer_tache(description_tache: str) -> dict:
-    """Supprime une tâche en se basant sur sa description."""
+    """
+    Supprime une tâche en se basant sur sa description.
+    Retourne l'ID de l'événement calendrier associé s'il existe, pour permettre sa suppression.
+    """
     logger.info("💾 TÂCHES: Tentative de suppression de la tâche '%s'.", description_tache)
     taches = lister_taches()
     tache_a_supprimer = _trouver_tache(description_tache, taches)
@@ -230,10 +245,33 @@ def supprimer_tache(description_tache: str) -> dict:
         logger.error("🔥 TÂCHES: Impossible de supprimer, la tâche '%s' est introuvable.", description_tache)
         return {"erreur": f"Tâche '{description_tache}' non trouvée."}
 
+    event_id = tache_a_supprimer.get('google_calendar_event_id')
+
     taches.remove(tache_a_supprimer)
     ecrire_donnees_json(NOM_FICHIER_TACHES, taches)
     logger.info("✅ TÂCHES: Tâche '%s' supprimée avec succès.", description_tache)
-    return {"succes": f"La tâche '{description_tache}' a été supprimée."}
+    
+    response = {"succes": f"La tâche '{description_tache}' a été supprimée."}
+    if event_id:
+        response["google_calendar_event_id"] = event_id
+        
+    return response
+
+def lier_tache_a_evenement(id_tache: str, id_evenement: str) -> dict:
+    """Associe un ID d'événement Google Calendar à une tâche."""
+    logger.info("💾 TÂCHES: Liaison de la tâche ID '%s' à l'événement ID '%s'.", id_tache, id_evenement)
+    taches = lister_taches()
+    tache_a_lier = next((t for t in taches if t['id'] == id_tache), None)
+
+    if not tache_a_lier:
+        logger.error("🔥 TÂCHES: Impossible de lier, la tâche ID '%s' est introuvable.", id_tache)
+        return {"erreur": f"Tâche avec l'ID '{id_tache}' non trouvée."}
+
+    tache_a_lier['google_calendar_event_id'] = id_evenement
+    tache_a_lier['date_modification'] = datetime.now().isoformat()
+    ecrire_donnees_json(NOM_FICHIER_TACHES, taches)
+    logger.info("✅ TÂCHES: Liaison effectuée avec succès.")
+    return {"succes": "Liaison de la tâche à l'événement de calendrier réussie."}
 
 # === FONCTIONS POUR LES SOUS-TÂCHES ===
 

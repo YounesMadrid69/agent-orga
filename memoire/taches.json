@@ -60,6 +60,21 @@
         "progression_sous_taches": null
     },
     {
+        "id": "89492031-1dd2-43e0-88ad-2f03cfccd0b4",
+        "description": "Ajouter le truc des conversions sur le site",
+        "statut": "à faire",
+        "projet_id": "c9d160d1-f3bf-44c8-9a20-e5a7f0e51e69",
+        "date_creation": "2025-06-29T16:47:07.227724",
+        "date_modification": "2025-06-29T16:47:07.227733",
+        "important": true,
+        "urgent": true,
+        "priorite": "P1 : Urgent et Important (À faire)",
+        "nom_projet": "Sirius",
+        "emoji_projet": "💧",
+        "resume_sous_taches": null,
+        "progression_sous_taches": null
+    },
+    {
         "id": "9a4fddc4-07b8-4e64-8b97-6ffe606391f8",
         "description": "Derusher stream backroom",
         "statut": "à faire",
@@ -180,68 +195,21 @@
         "progression_sous_taches": null
     },
     {
-        "id": "d90e722a-5bbc-419c-8f95-bda05c2a01a4",
-        "description": "Ajouter les sous-tâches",
-        "statut": "à faire",
-        "projet_id": "proj_e95f831b-9f6c-40d3-9a3c-4333d3b2cdd5",
-        "date_creation": "2025-06-27T02:19:24.401734",
-        "date_modification": "2025-06-28T02:14:28.101362",
+        "id": "f87b6901-eab8-45eb-bc34-ae0fd375ab41",
+        "description": "Séance à la salle",
+        "statut": "terminée",
+        "projet_id": "proj_15fde591-3def-4295-ae15-cee0e153a433",
+        "date_creation": "2025-07-10T21:30:53.971961",
+        "date_modification": "2025-07-10T21:30:54.391463",
+        "date_echeance": "2025-07-09T12:00:00",
         "important": false,
         "urgent": false,
         "priorite": "P4 : Ni Urgent, ni Important (À abandonner/reporter)",
-        "nom_projet": "Jarvis Project",
-        "emoji_projet": "🤖",
-        "resume_sous_taches": {
-            "total": 3,
-            "terminees": 1,
-            "en_cours": 0,
-            "a_faire": 2
-        },
-        "progression_sous_taches": 33,
-        "sous_taches": [
-            {
-                "id": "sous_556b547f-f435-494f-b9bb-d1079f73c248",
-                "description": "Créer les nouvelles fonctions",
-                "statut": "terminée",
-                "date_creation": "2025-06-28T02:14:16.260881",
-                "date_modification": "2025-06-28T02:14:28.101361",
-                "important": true,
-                "urgent": false,
-                "priorite": "P2 : Important mais pas Urgent (À planifier)"
-            },
-            {
-                "id": "sous_2cff7b4e-9ec4-41ce-90c6-273eb3160746",
-                "description": "Mettre à jour agent_conseiller.py",
-                "statut": "à faire",
-                "date_creation": "2025-06-28T02:14:28.100569",
-                "date_modification": "2025-06-28T02:14:28.100575",
-                "important": true,
-                "urgent": true,
-                "priorite": "P1 : Urgent et Important (À faire)"
-            },
-            {
-                "id": "sous_e7c3b13e-1c7c-4efb-a5d0-c277961b6522",
-                "description": "Tester les nouvelles fonctionnalités",
-                "statut": "à faire",
-                "date_creation": "2025-06-28T02:14:28.100997",
-                "date_modification": "2025-06-28T02:14:28.100999",
-                "important": false,
-                "urgent": false,
-                "priorite": "P4 : Ni Urgent, ni Important (À abandonner/reporter)"
-            }
-        ]
-    },
-    {
-        "id": "89492031-1dd2-43e0-88ad-2f03cfccd0b4",
-        "description": "Ajouter le truc des conversions sur le site",
-        "statut": "à faire",
-        "projet_id": "c9d160d1-f3bf-44c8-9a20-e5a7f0e51e69",
-        "date_creation": "2025-06-29T16:47:07.227724",
-        "date_modification": "2025-06-29T16:47:07.227733",
-        "important": true,
-        "urgent": true,
-        "priorite": "P1 : Urgent et Important (À faire)",
-        "nom_projet": "Sirius",
-        "emoji_projet": "💧"
+        "suivi_envoye": false,
+        "google_calendar_event_id": "9mlppelndgdvrihf36gnqdjb0c",
+        "nom_projet": "Buche",
+        "emoji_projet": "💪",
+        "resume_sous_taches": null,
+        "progression_sous_taches": null
     }
 ]

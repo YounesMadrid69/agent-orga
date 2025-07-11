@@ -23,11 +23,24 @@ def _sauvegarder_projets(projets: list):
 def lister_projets() -> list:
     """
     Retourne la liste complète de tous les projets.
-    Les projets créés avant cette mise à jour n'auront pas les nouveaux champs 
-    jusqu'à ce qu'ils soient modifiés.
+    S'assure que chaque projet a bien le champ 'suivi_proactif_active'.
     """
-    logger.debug("💾 PROJETS: Lecture de tous les projets demandée.")
-    return _charger_projets()
+    logger.debug("💾 PROJETS: Lecture et validation de tous les projets demandée.")
+    projets = _charger_projets()
+    
+    modifications_effectuees = False
+    for projet in projets:
+        # Contrôle de qualité : si la clé de suivi manque, on l'ajoute par défaut à False.
+        if 'suivi_proactif_active' not in projet:
+            projet['suivi_proactif_active'] = False
+            modifications_effectuees = True
+            
+    # Si on a dû réparer des projets, on sauvegarde le fichier pour l'avenir.
+    if modifications_effectuees:
+        logger.info("⚙️ PROJETS: Le contrôleur qualité a ajouté des champs de suivi manquants à certains projets.")
+        _sauvegarder_projets(projets)
+        
+    return projets
 
 def ajouter_projet(nom: str, description: str = None, calendrier_associe: str = None, emoji: str = None) -> dict:
     """Ajoute un nouveau projet à la liste, avec une description, un calendrier et un émoji optionnels."""
@@ -47,7 +60,8 @@ def ajouter_projet(nom: str, description: str = None, calendrier_associe: str = 
         'nom': nom,
         'description': description or "",
         'calendrier_associe': calendrier_associe or "",
-        'emoji': emoji or None
+        'emoji': emoji or None,
+        'suivi_proactif_active': False  # Par défaut, le suivi est désactivé
     }
     projets.append(nouveau_projet)
     _sauvegarder_projets(projets)
@@ -119,3 +133,27 @@ def supprimer_projet(id_projet: str) -> dict:
     _sauvegarder_projets(projets_apres)
     logger.info("✅ PROJETS: Projet ID '%s' supprimé avec succès.", id_projet)
     return {"succes": f"Projet ID {id_projet} supprimé."} 
+
+def _modifier_etat_suivi_projet(nom_projet: str, etat: bool) -> dict:
+    """Fonction interne pour activer ou désactiver le suivi d'un projet."""
+    projets = _charger_projets()
+    projet_a_modifier = next((p for p in projets if p['nom'].lower() == nom_projet.lower()), None)
+
+    if not projet_a_modifier:
+        logger.error("🔥 PROJETS: Impossible de modifier le suivi, le projet '%s' est introuvable.", nom_projet)
+        return {"erreur": f"Aucun projet trouvé avec le nom '{nom_projet}'."}
+
+    projet_a_modifier['suivi_proactif_active'] = etat
+    _sauvegarder_projets(projets)
+    
+    action = "activé" if etat else "désactivé"
+    logger.info(f"✅ PROJETS: Suivi proactif {action} pour le projet '{nom_projet}'.")
+    return {"succes": f"Le suivi proactif a été {action} pour le projet '{nom_projet}'."}
+
+def activer_suivi_projet(nom_projet: str) -> dict:
+    """Active le suivi proactif pour les événements d'un projet spécifique."""
+    return _modifier_etat_suivi_projet(nom_projet, True)
+
+def desactiver_suivi_projet(nom_projet: str) -> dict:
+    """Désactive le suivi proactif pour les événements d'un projet spécifique."""
+    return _modifier_etat_suivi_projet(nom_projet, False) 

@@ -26,4 +26,7 @@ ENV/
 
 # Données temporaires
 *.tmp
-*.temp 
+*.temp
+
+# Données de l'application (tâches, projets, etc.)
+memoire/*.json 

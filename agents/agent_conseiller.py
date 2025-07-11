@@ -14,15 +14,21 @@ from .agent_taches import (
     ajouter_tache, lister_taches, modifier_tache,
     supprimer_tache, changer_statut_tache,
     ajouter_sous_tache, lister_sous_taches, modifier_sous_tache,
-    supprimer_sous_tache, changer_statut_sous_tache
+    supprimer_sous_tache, changer_statut_sous_tache,
+    lier_tache_a_evenement
 )
 from .agent_projets import (
-    ajouter_projet, lister_projets, modifier_projet, supprimer_projet
+    ajouter_projet, lister_projets, modifier_projet, supprimer_projet,
+    activer_suivi_projet, desactiver_suivi_projet
 )
 from .agent_calendrier import (
     lister_prochains_evenements, creer_evenement_calendrier, modifier_evenement_calendrier,
     supprimer_evenement_calendrier, lister_tous_les_calendriers,
     creer_calendrier, renommer_calendrier, supprimer_calendrier
+)
+# On importe le nouvel agent !
+from .agent_apprentissage import (
+    enregistrer_apprentissage, consulter_apprentissage, lister_apprentissages, supprimer_apprentissage
 )
 
 # --- Configuration ---
@@ -42,10 +48,11 @@ except Exception as e:
 gemini_tools = [
     # Outils pour les Tâches
     {"type": "function", "function": {"name": "lister_taches", "description": "Obtenir la liste de toutes les tâches, triées par priorité (selon la matrice d'Eisenhower)."}},
-    {"type": "function", "function": {"name": "ajouter_tache", "description": "Ajouter une nouvelle tâche. L'importance et l'urgence peuvent être spécifiées.", "parameters": {"type": "OBJECT", "properties": {"description": {"type": "STRING", "description": "Description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Nom du projet associé."}, "important": {"type": "BOOLEAN", "description": "La tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La tâche est-elle urgente ?"}}, "required": ["description"]}}},
-    {"type": "function", "function": {"name": "modifier_tache", "description": "Modifier une tâche (description, projet, importance, urgence). La priorité sera recalculée automatiquement.", "parameters": {"type": "OBJECT", "properties": {"description_actuelle": {"type": "STRING", "description": "Description actuelle de la tâche à modifier."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet pour la tâche."}, "nouvelle_importance": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'urgence."}}, "required": ["description_actuelle"]}}},
+    {"type": "function", "function": {"name": "ajouter_tache", "description": "Ajouter une nouvelle tâche. L'importance et l'urgence peuvent être spécifiées.", "parameters": {"type": "OBJECT", "properties": {"description": {"type": "STRING", "description": "Description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Nom du projet associé."}, "important": {"type": "BOOLEAN", "description": "La tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La tâche est-elle urgente ?"}, "date_echeance": {"type": "STRING", "description": "Optionnel. Date et heure d'échéance de la tâche au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}}, "required": ["description"]}}},
+    {"type": "function", "function": {"name": "modifier_tache", "description": "Modifier une tâche (description, projet, importance, urgence). La priorité sera recalculée automatiquement.", "parameters": {"type": "OBJECT", "properties": {"description_actuelle": {"type": "STRING", "description": "Description actuelle de la tâche à modifier."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet pour la tâche."}, "nouvelle_importance": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'urgence."}, "nouvelle_date_echeance": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure d'échéance au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}}, "required": ["description_actuelle"]}}},
     {"type": "function", "function": {"name": "changer_statut_tache", "description": "Changer le statut d'une tâche (à faire, en cours, terminée).", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à modifier."}, "nouveau_statut": {"type": "STRING", "description": "Le nouveau statut."}}, "required": ["description_tache", "nouveau_statut"]}}},
     {"type": "function", "function": {"name": "supprimer_tache", "description": "Supprimer une tâche.", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à supprimer."}}, "required": ["description_tache"]}}},
+    {"type": "function", "function": {"name": "lier_tache_a_evenement", "description": "Interne: Associe un ID d'événement Google Calendar à une tâche après sa création.", "parameters": {"type": "OBJECT", "properties": {"id_tache": {"type": "STRING", "description": "ID de la tâche à lier."}, "id_evenement": {"type": "STRING", "description": "ID de l'événement Google Calendar à lier."}}, "required": ["id_tache", "id_evenement"]}}},
     
     # Outils pour les Sous-Tâches
     {"type": "function", "function": {"name": "ajouter_sous_tache", "description": "Ajouter une sous-tâche à une tâche existante.", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent à laquelle ajouter la sous-tâche."}, "description_sous_tache": {"type": "STRING", "description": "Description de la nouvelle sous-tâche."}, "important": {"type": "BOOLEAN", "description": "La sous-tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La sous-tâche est-elle urgente ?"}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
@@ -55,10 +62,12 @@ gemini_tools = [
     {"type": "function", "function": {"name": "supprimer_sous_tache", "description": "Supprimer une sous-tâche d'une tâche parent.", "parameters": {"type": "OBJECT", "properties": {"description_tache_parent": {"type": "STRING", "description": "Description de la tâche parent."}, "description_sous_tache": {"type": "STRING", "description": "Description de la sous-tâche à supprimer."}}, "required": ["description_tache_parent", "description_sous_tache"]}}},
     
     # Outils pour les Projets
-    {"type": "function", "function": {"name": "lister_projets", "description": "Obtenir la liste de tous les projets avec leurs détails (ID, nom, description, calendrier_associe, emoji)."}},
+    {"type": "function", "function": {"name": "lister_projets", "description": "Obtenir la liste de tous les projets avec leurs détails complets (ID, nom, description, calendrier_associe, emoji, et si le suivi proactif est activé)."}},
     {"type": "function", "function": {"name": "ajouter_projet", "description": "Créer un nouveau projet. Une description, un calendrier et un émoji peuvent être spécifiés.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Le nom du nouveau projet."}, "description": {"type": "STRING", "description": "Optionnel. Une description détaillée des objectifs du projet."}, "calendrier_associe": {"type": "STRING", "description": "Optionnel. Le nom du Google Calendar lié à ce projet."}, "emoji": {"type": "STRING", "description": "Optionnel. Un émoji unique pour représenter le projet (ex: '🚀')."}}, "required": ["nom"]}}},
     {"type": "function", "function": {"name": "modifier_projet", "description": "Mettre à jour le nom, la description, le calendrier ou l'émoji d'un projet existant via son ID.", "parameters": {"type": "OBJECT", "properties": {"id_projet": {"type": "STRING", "description": "ID du projet à modifier."}, "nouveau_nom": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description complète du projet."}, "nouveau_calendrier": {"type": "STRING", "description": "Optionnel. Le nouveau nom du calendrier Google à associer."}, "nouvel_emoji": {"type": "STRING", "description": "Optionnel. Le nouvel émoji pour le projet."}}, "required": ["id_projet"]}}},
     {"type": "function", "function": {"name": "supprimer_projet", "description": "Supprimer un projet.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Nom du projet à supprimer."}}, "required": ["nom"]}}},
+    {"type": "function", "function": {"name": "activer_suivi_projet", "description": "Activer les notifications de suivi pour les événements d'un projet.", "parameters": {"type": "OBJECT", "properties": {"nom_projet": {"type": "STRING", "description": "Le nom du projet pour lequel activer le suivi."}}, "required": ["nom_projet"]}}},
+    {"type": "function", "function": {"name": "desactiver_suivi_projet", "description": "Désactiver les notifications de suivi pour les événements d'un projet.", "parameters": {"type": "OBJECT", "properties": {"nom_projet": {"type": "STRING", "description": "Le nom du projet pour lequel désactiver le suivi."}}, "required": ["nom_projet"]}}},
 
     # Outils pour le Calendrier
     {"type": "function", "function": {"name": "lister_tous_les_calendriers", "description": "Obtenir la liste de tous les calendriers Google de l'utilisateur."}},
@@ -71,16 +80,26 @@ gemini_tools = [
     {"type": "function", "function": {"name": "creer_calendrier", "description": "Créer un tout nouveau calendrier.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Le nom du nouveau calendrier à créer."}}, "required": ["nom_calendrier"]}}},
     {"type": "function", "function": {"name": "renommer_calendrier", "description": "Changer le nom d'un calendrier existant.", "parameters": {"type": "OBJECT", "properties": {"nom_actuel": {"type": "STRING", "description": "Le nom actuel du calendrier à renommer."}, "nouveau_nom": {"type": "STRING", "description": "Le nouveau nom pour le calendrier."}}, "required": ["nom_actuel", "nouveau_nom"]}}},
     {"type": "function", "function": {"name": "supprimer_calendrier", "description": "Supprimer définitivement un calendrier. Cette action est irréversible.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Le nom du calendrier à supprimer."}}, "required": ["nom_calendrier"]}}},
+    
+    # NOUVEAUX Outils pour la Mémoire Persistante (Apprentissage)
+    {"type": "function", "function": {"name": "enregistrer_apprentissage", "description": "Mémorise une information importante fournie par l'utilisateur (préférence, décision, fait). Utiliser une clé simple et une valeur claire. Ex: (cle='habitude_sport', valeur='Lundi et Mercredi soir').", "parameters": {"type": "OBJECT", "properties": {"cle": {"type": "STRING", "description": "La clé ou le nom de l'information à mémoriser. Doit être unique et descriptive."}, "valeur": {"type": "STRING", "description": "L'information ou la valeur à enregistrer."}}, "required": ["cle", "valeur"]}}},
+    {"type": "function", "function": {"name": "consulter_apprentissage", "description": "Consulte une information spécifique dans la mémoire en utilisant sa clé.", "parameters": {"type": "OBJECT", "properties": {"cle": {"type": "STRING", "description": "La clé de l'information à retrouver."}}, "required": ["cle"]}}},
+    {"type": "function", "function": {"name": "lister_apprentissages", "description": "Affiche la totalité de ce que l'assistant a appris (toutes les paires clé-valeur mémorisées)."}},
+    {"type": "function", "function": {"name": "supprimer_apprentissage", "description": "Oublie (supprime) une information de la mémoire en utilisant sa clé.", "parameters": {"type": "OBJECT", "properties": {"cle": {"type": "STRING", "description": "La clé de l'information à supprimer."}}, "required": ["cle"]}}},
 ]
 
 # Mapping complet des outils
 available_functions = {
     "lister_taches": lister_taches, "ajouter_tache": ajouter_tache, "modifier_tache": modifier_tache, "supprimer_tache": supprimer_tache, "changer_statut_tache": changer_statut_tache,
+    "lier_tache_a_evenement": lier_tache_a_evenement,
     "ajouter_sous_tache": ajouter_sous_tache, "lister_sous_taches": lister_sous_taches, "modifier_sous_tache": modifier_sous_tache, "supprimer_sous_tache": supprimer_sous_tache, "changer_statut_sous_tache": changer_statut_sous_tache,
     "lister_projets": lister_projets, "ajouter_projet": ajouter_projet, "modifier_projet": modifier_projet, "supprimer_projet": supprimer_projet,
+    "activer_suivi_projet": activer_suivi_projet, "desactiver_suivi_projet": desactiver_suivi_projet,
     "lister_prochains_evenements": lister_prochains_evenements, "creer_evenement_calendrier": creer_evenement_calendrier, "modifier_evenement_calendrier": modifier_evenement_calendrier, "supprimer_evenement_calendrier": supprimer_evenement_calendrier,
     "lister_tous_les_calendriers": lister_tous_les_calendriers,
     "creer_calendrier": creer_calendrier, "renommer_calendrier": renommer_calendrier, "supprimer_calendrier": supprimer_calendrier,
+    # On ajoute les nouvelles fonctions au mapping
+    "enregistrer_apprentissage": enregistrer_apprentissage, "consulter_apprentissage": consulter_apprentissage, "lister_apprentissages": lister_apprentissages, "supprimer_apprentissage": supprimer_apprentissage,
 }
 
 # NOUVELLE FONCTION DE LOG SÉCURISÉE
@@ -95,6 +114,69 @@ def _log_history(history: list) -> str:
     except TypeError:
         # En cas d'échec, on retourne une chaîne de caractères qui ne fera jamais planter le log
         return f"L'historique contient {len(history)} messages (certains objets ne sont pas sérialisables en JSON)."
+
+def generer_analyse_situation():
+    """Génère un résumé textuel de la situation (projets, tâches, stats)."""
+    # Cette fonction pourrait être enrichie pour générer un prompt d'analyse plus complexe
+    # mais pour l'instant, on se contente de signaler que la logique est ici.
+    taches = lister_taches()
+    projets = lister_projets()
+    evenements = lister_prochains_evenements(5)
+
+    # Ici, au lieu d'appeler l'IA (puisque c'est elle qui nous a appelés), 
+    # on formate simplement les informations. L'intelligence est déjà dans le choix de la fonction.
+    return f"""
+    --- Rapport de Situation ---
+    
+    Projets: {len(projets)}
+    Tâches: {len(taches)}
+    Événements à venir: {len(evenements)}
+
+    (Cette section peut être enrichie pour une analyse plus détaillée sans re-appeler l'IA)
+    """
+
+def generer_contexte_complet(date_actuelle: str):
+    """
+    Génère un contexte complet (prompt système) pour l'IA, incluant
+    la situation actuelle (tâches, projets), les leçons apprises et la personnalité de l'assistant.
+    """
+    logger.info("🧠 CONTEXTE: Génération du contexte complet pour l'IA...")
+
+    # On récupère l'analyse de la situation (tâches, projets, etc.)
+    analyse = generer_analyse_situation()
+    
+    # On récupère les leçons apprises
+    apprentissages = lister_apprentissages()
+
+    # On formate les apprentissages pour les inclure dans le prompt
+    partie_apprentissages = ""
+    if apprentissages and isinstance(apprentissages, dict):
+        # On s'assure qu'on a un dictionnaire non vide
+        apprentissages_formattes = "\n".join([f"- {cle}: {valeur}" for cle, valeur in apprentissages.items()])
+        partie_apprentissages = f"""
+### Leçons Apprises et Préférences (Mémoire)
+Voici les informations et préférences que tu as enregistrées pour t'en souvenir :
+{apprentissages_formattes}
+"""
+
+    prompt_systeme = f"""
+# PROFIL DE L'ASSISTANT
+Tu es un assistant personnel expert en organisation et productivité, agissant comme un coach proactif.
+Ton ton est encourageant, concis et orienté vers l'action.
+Tu dois anticiper les besoins de l'utilisateur, l'aider à décomposer ses projets en tâches actionnables et à maintenir son élan.
+Tu dois systématiquement utiliser les outils à ta disposition pour manipuler les données (tâches, projets, calendrier, mémoire). Ne réponds JAMAIS que tu as fait une action (créer, modifier, enregistrer) sans avoir VRAIMENT appelé l'outil correspondant.
+Quand tu analyses une situation, fais-le en silence et ne présente que la conclusion ou la prochaine étape pertinente pour l'utilisateur.
+Il doit rester concentré sur l'accomplissement des objectifs fixés.
+L'IA doit utiliser les emojis de manière pertinente et naturelle.
+La date et l'heure actuelles sont : {date_actuelle}.
+
+# SITUATION ACTUELLE DE L'UTILISATEUR
+{analyse}
+{partie_apprentissages}
+# FIN DU CONTEXTE
+"""
+    logger.debug(f"CONTEXTE COMPLET: \n{prompt_systeme}")
+    return prompt_systeme
 
 def router_requete_utilisateur(historique_conversation: list):
     """
@@ -160,6 +242,52 @@ def router_requete_utilisateur(historique_conversation: list):
                         # On exécute la fonction
                         function_response_data = function_to_call(**args)
                         
+                        # --- NOUVELLE LOGIQUE DE SYNCHRONISATION TÂCHE -> CALENDRIER ---
+                        if function_name in ["ajouter_tache", "modifier_tache"]:
+                            # On vérifie si la fonction a réussi et si une date est présente
+                            if "erreur" not in function_response_data and function_response_data.get("date_echeance"):
+                                tache_info = function_response_data
+                                event_id_existant = tache_info.get("google_calendar_event_id")
+
+                                # Cas 1: La tâche a été modifiée et avait déjà un événement
+                                if function_name == "modifier_tache" and event_id_existant:
+                                    logger.info(f"SYNCHRO: Mise à jour de l'événement existant '{event_id_existant}' pour la tâche '{tache_info['description']}'.")
+                                    modifier_evenement_calendrier(
+                                        event_id=event_id_existant,
+                                        nouveau_titre=tache_info['description'],
+                                        nouvelle_date_heure_debut=tache_info['date_echeance']
+                                    )
+                                # Cas 2: La tâche est nouvelle ou n'avait pas d'événement, on en crée un
+                                elif not event_id_existant:
+                                    logger.info(f"SYNCHRO: Création d'un nouvel événement pour la tâche '{tache_info['description']}'.")
+                                    reponse_creation_event = creer_evenement_calendrier(
+                                        titre=tache_info['description'],
+                                        date_heure_debut=tache_info['date_echeance']
+                                    )
+                                    # Si la création de l'événement a réussi, on lie les deux
+                                    if "erreur" not in reponse_creation_event and reponse_creation_event.get("event_id"):
+                                        lier_tache_a_evenement(
+                                            id_tache=tache_info['id'],
+                                            id_evenement=reponse_creation_event['event_id']
+                                        )
+
+                            # Cas 3: Une date d'échéance a été retirée d'une tâche
+                            elif "erreur" not in function_response_data and not function_response_data.get("date_echeance"):
+                                tache_info = function_response_data
+                                event_id_a_supprimer = tache_info.get("google_calendar_event_id")
+                                if function_name == "modifier_tache" and event_id_a_supprimer:
+                                    logger.info(f"SYNCHRO: Suppression de l'événement associé '{event_id_a_supprimer}' car la date a été retirée de la tâche.")
+                                    supprimer_evenement_calendrier(event_id=event_id_a_supprimer)
+                                    # On dé-lie l'événement de la tâche
+                                    lier_tache_a_evenement(id_tache=tache_info['id'], id_evenement=None)
+
+                        # --- LOGIQUE DE SUPPRESSION D'ÉVÉNEMENT LIÉ ---
+                        if function_name == "supprimer_tache" and "erreur" not in function_response_data:
+                            event_id_a_supprimer = function_response_data.get("google_calendar_event_id")
+                            if event_id_a_supprimer:
+                                logger.info(f"SYNCHRO: Suppression de l'événement de calendrier lié '{event_id_a_supprimer}' suite à la suppression de la tâche.")
+                                supprimer_evenement_calendrier(event_id=event_id_a_supprimer)
+                        
                         # VÉRIFICATION CRUCIALE : L'API Gemini attend un dictionnaire (objet JSON) pour le champ "response".
                         # Si notre fonction retourne une simple liste (ex: lister_taches), on doit l'encapsuler
                         # dans un dictionnaire pour être conforme.
@@ -215,176 +343,3 @@ def router_requete_utilisateur(historique_conversation: list):
     except Exception as e:
         logger.error(f"🔥 ERREUR DÉTAILLÉE: L'appel à l'API Google Gemini a échoué: {repr(e)}", exc_info=True)
         return f"Désolé, une erreur de communication avec l'IA est survenue: {repr(e)}"
-
-
-def generer_analyse_situation():
-    """Version simplifiée pour être appelée par le routeur."""
-    # Cette fonction pourrait être enrichie pour générer un prompt d'analyse plus complexe
-    # mais pour l'instant, on se contente de signaler que la logique est ici.
-    taches = lister_taches()
-    projets = lister_projets()
-    evenements = lister_prochains_evenements(5)
-
-    # Ici, au lieu d'appeler l'IA (puisque c'est elle qui nous a appelés), 
-    # on formate simplement les informations. L'intelligence est déjà dans le choix de la fonction.
-    return f"""
-    --- Rapport de Situation ---
-    
-    Projets: {len(projets)}
-    Tâches: {len(taches)}
-    Événements à venir: {len(evenements)}
-
-    (Cette section peut être enrichie pour une analyse plus détaillée sans re-appeler l'IA)
-    """
-
-def generer_contexte_complet():
-    """
-    Génère un contexte complet avec TOUTES les informations disponibles :
-    - Tous les projets avec détails complets
-    - Toutes les tâches avec sous-tâches et priorités
-    - Agenda complet de la semaine pour tous les calendriers
-    - Statistiques contextuelles
-    """
-    logger.info("🧠 CONTEXTE: Génération du contexte complet pour l'IA...")
-    
-    try:
-        # === RÉCUPÉRATION DES DONNÉES ===
-        projets = lister_projets()
-        taches = lister_taches()
-        calendriers = lister_tous_les_calendriers()
-        
-        # Récupérer les événements de toute la semaine (7 jours) pour tous les calendriers
-        evenements_semaine = lister_prochains_evenements(50)  # Plus d'événements pour couvrir la semaine
-        
-        # === STATISTIQUES GÉNÉRALES ===
-        total_projets = len(projets)
-        total_taches = len(taches)
-        
-        # Statistiques des tâches par priorité
-        taches_p1 = [t for t in taches if t.get('priorite', '').startswith('P1')]
-        taches_p2 = [t for t in taches if t.get('priorite', '').startswith('P2')]
-        taches_p3 = [t for t in taches if t.get('priorite', '').startswith('P3')]
-        taches_p4 = [t for t in taches if t.get('priorite', '').startswith('P4')]
-        
-        # Statistiques des tâches par statut
-        taches_a_faire = [t for t in taches if t.get('statut') == 'à faire']
-        taches_en_cours = [t for t in taches if t.get('statut') == 'en cours']
-        taches_terminees = [t for t in taches if t.get('statut') == 'terminée']
-        
-        # Tâches avec sous-tâches
-        taches_avec_sous_taches = [t for t in taches if t.get('sous_taches')]
-        
-        # === CONSTRUCTION DU CONTEXTE ===
-        contexte = f"""
-=== CONTEXTE COMPLET DE L'UTILISATEUR ===
-
-📊 STATISTIQUES GÉNÉRALES :
-- Projets actifs : {total_projets}
-- Tâches totales : {total_taches}
-- Tâches P1 (Urgent+Important) : {len(taches_p1)}
-- Tâches P2 (Important) : {len(taches_p2)}
-- Tâches P3 (Urgent) : {len(taches_p3)}
-- Tâches P4 (Ni urgent ni important) : {len(taches_p4)}
-- Tâches à faire : {len(taches_a_faire)}
-- Tâches en cours : {len(taches_en_cours)}
-- Tâches terminées : {len(taches_terminees)}
-- Tâches avec sous-tâches : {len(taches_avec_sous_taches)}
-
-🎯 PROJETS COMPLETS :"""
-
-        if projets:
-            for projet in projets:
-                emoji = projet.get('emoji', '📁')
-                nom = projet.get('nom', 'Sans nom')
-                description = projet.get('description', 'Pas de description')
-                calendrier = projet.get('calendrier_associe', 'Aucun calendrier')
-                
-                # Compter les tâches de ce projet
-                taches_projet = [t for t in taches if t.get('projet_id') == projet.get('id')]
-                
-                contexte += f"""
-{emoji} {nom}
-   Description: {description}
-   Calendrier associé: {calendrier}
-   Tâches liées: {len(taches_projet)}"""
-        else:
-            contexte += "\nAucun projet défini."
-
-        contexte += f"""
-
-✅ TOUTES LES TÂCHES (triées par priorité) :"""
-
-        if taches:
-            priorite_actuelle = None
-            for tache in taches:
-                priorite = tache.get('priorite', 'Priorité inconnue')
-                
-                # Afficher le titre de la priorité si elle change
-                if priorite != priorite_actuelle:
-                    contexte += f"""
-
-{priorite} :"""
-                    priorite_actuelle = priorite
-                
-                # Informations de base de la tâche
-                emoji_projet = tache.get('emoji_projet', '🔹')
-                description = tache.get('description', 'Sans description')
-                statut = tache.get('statut', 'inconnu')
-                nom_projet = tache.get('nom_projet', 'Aucun projet')
-                
-                # Informations sur les sous-tâches
-                sous_taches = tache.get('sous_taches', [])
-                resume_sous_taches = tache.get('resume_sous_taches')
-                
-                if resume_sous_taches:
-                    progression = f" ({resume_sous_taches['terminees']}/{resume_sous_taches['total']} sous-tâches terminées)"
-                else:
-                    progression = ""
-                
-                contexte += f"""
-{emoji_projet} {description} [Statut: {statut}] [Projet: {nom_projet}]{progression}"""
-                
-                # Détailler les sous-tâches si elles existent
-                if sous_taches:
-                    for sous_tache in sous_taches:
-                        st_description = sous_tache.get('description', 'Sans description')
-                        st_statut = sous_tache.get('statut', 'inconnu')
-                        st_priorite = sous_tache.get('priorite', 'Inconnue')
-                        statut_emoji = '✅' if st_statut == 'terminée' else '🔄' if st_statut == 'en cours' else '⏳'
-                        contexte += f"""
-     {statut_emoji} {st_description} [{st_priorite}]"""
-        else:
-            contexte += "\nAucune tâche définie."
-
-        contexte += f"""
-
-📅 AGENDA COMPLET DE LA SEMAINE :"""
-
-        if calendriers:
-            contexte += f"""
-Calendriers disponibles : {', '.join([c.get('summary', 'Sans nom') for c in calendriers])}
-"""
-
-        if evenements_semaine:
-            contexte += f"""
-Événements à venir ({len(evenements_semaine)} événements) :"""
-            for event in evenements_semaine:
-                titre = event.get('summary', 'Sans titre')
-                debut = event.get('start', 'Date inconnue')
-                calendrier = event.get('calendar', 'Calendrier inconnu')
-                contexte += f"""
-📅 {titre} - {debut} [{calendrier}]"""
-        else:
-            contexte += "\nAucun événement prévu dans les prochains jours."
-
-        contexte += """
-
-=== FIN DU CONTEXTE ===
-"""
-
-        logger.info("✅ CONTEXTE: Contexte complet généré avec succès.")
-        return contexte
-        
-    except Exception as e:
-        logger.error(f"🔥 CONTEXTE: Erreur lors de la génération du contexte complet: {e}")
-        return f"\n=== ERREUR DE CONTEXTE ===\nImpossible de charger le contexte complet: {e}\n"

@@ -6,7 +6,8 @@
         "date_creation": "2025-06-26T20:05:41.491237",
         "emoji": "🪵",
         "description": "Vente de coques de téléphone en bois personnalisées. J'achète des coques en bois et utilise une graveuse laser xTool F1 pour les personnaliser. L'objectif est de terminer le site e-commerce pour vendre ces produits en ligne, le projet de participation aux marchés nocturnes ayant été refusé.",
-        "calendrier_associe": "Woodcoq"
+        "calendrier_associe": "Woodcoq",
+        "suivi_proactif_active": true
     },
     {
         "id": "c9d160d1-f3bf-44c8-9a20-e5a7f0e51e69",
@@ -15,69 +16,79 @@
         "date_creation": "2025-06-26T20:10:48.931799",
         "emoji": "💧",
         "description": "Société de nettoyage initialement centrée sur le nettoyage de voitures. Après une bonne campagne de publicité qui a bien converti, l'objectif est maintenant de déléguer le nettoyage à des prestataires, en prenant une marge sur les services. L'idée est d'élargir cette approche aux services de nettoyage de canapés et tapis en créant un site dédié et en lançant une campagne publicitaire.",
-        "calendrier_associe": "Sirius"
+        "calendrier_associe": "Sirius",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_e95f831b-9f6c-40d3-9a3c-4333d3b2cdd5",
         "nom": "Jarvis Project",
         "description": "Développement d'un agent d'intelligence artificielle assistante, conçu pour gérer les tâches quotidiennes, organiser le planning, et optimiser la productivité de ses utilisateurs. L'objectif est de faire de l'IA un partenaire de confiance accessible, intelligent et sympathique.",
         "calendrier_associe": "Jarvis Project",
-        "emoji": "🤖"
+        "emoji": "🤖",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_15fde591-3def-4295-ae15-cee0e153a433",
         "nom": "Buche",
         "description": "Transformation physique visant à obtenir un corps esthétique et musclé, avec des pecs, des abdos, et des compétences avancées en force et calisthénie. L'objectif est d'améliorer l'estime de soi par la confiance en son apparence physique.",
         "calendrier_associe": "Buche",
-        "emoji": "💪"
+        "emoji": "💪",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_0301f6fa-a3ba-4149-8cea-88a40d162c8e",
         "nom": "自由",
         "description": "Profiter de la vie à fond : les sorties entre amis, les soirées jeux, les moments de détente, les discussions chill, les balades en voiture avec ma copine, et plus encore. Une aventure de plaisir et de relaxation.",
         "calendrier_associe": "自由",
-        "emoji": "✨"
+        "emoji": "✨",
+        "suivi_proactif_active": false
     },
     {
         "id": "proj_23ecb310-0760-4652-9f11-babc220c4e38",
         "nom": "DreamTeams",
         "description": "\"DreamTeams\" est une application de réseau social pour les joueurs de football amateurs. Elle permet de former des équipes, d'attirer des joueurs similaires et d'organiser des matchs. Le projet répond à des préoccupations personnelles de manque de joueurs pour organiser des matchs amicaux. Ses fonctionnalités incluent la création et évolution des cartes de joueurs, le matchmaking, la gamification, un espace social pour partager des vidéos de foot, la gestion des terrains, et la gestion d'équipe.",
         "calendrier_associe": "DreamTeams",
-        "emoji": "🏟️"
+        "emoji": "🏟️",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_faee39fd-6cc2-4f01-9c3a-9c50c844cd2c",
         "nom": "YounesSama",
         "description": "Devenir créateur de contenu sur Twitch et YouTube, réaliser un rêve d'enfant de devenir streamer et YouTuber. L'objectif est de faire partie du top 1% des créateurs, pour jouir de la liberté et du succès dans ce métier en plein essor.",
         "calendrier_associe": "YounesSama",
-        "emoji": "👾"
+        "emoji": "👾",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_ababdd69-cda5-467b-a26a-830f9c3fbdc4",
         "nom": "Distraction",
         "description": "Inclure des moments de détente comme le binge-watching de séries ou regarder la TV. Bien que ce ne soit pas un projet traditionnel, l'objectif est de planifier ces activités dans le calendrier et les tâches pour une gestion équilibrée du temps.",
         "calendrier_associe": "Distraction",
-        "emoji": "📺"
+        "emoji": "📺",
+        "suivi_proactif_active": false
     },
     {
         "id": "proj_dc232c06-aa17-4015-80af-fcfbf6836beb",
         "nom": "Discipline",
         "description": "Établir des routines saines et des pratiques de pleine conscience pour améliorer la santé mentale. Cela inclut la gestion des addictions, la réflexion, et la méditation.",
         "calendrier_associe": "Discipline",
-        "emoji": "🧠"
+        "emoji": "🧠",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_51e20d36-cb57-4303-9161-a705d0f2c094",
         "nom": "Kawn Studio",
         "description": "Un projet créatif, potentiellement dans l'art ou le design, sous le label 'Kawn Studio'.",
         "calendrier_associe": "Kawn Studio",
-        "emoji": "🪐"
+        "emoji": "🪐",
+        "suivi_proactif_active": true
     },
     {
         "id": "proj_0b8d9b40-6da3-466d-852d-9dc723864347",
         "nom": "Road To 99",
         "description": "Devenir un ailier monstrueux",
         "calendrier_associe": "⚽️ Foot",
-        "emoji": "⚡️"
+        "emoji": "⚡️",
+        "suivi_proactif_active": true
     }
 ]

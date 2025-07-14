@@ -19,8 +19,7 @@ from .agent_taches import (
     lier_tache_a_evenement
 )
 from .agent_projets import (
-    ajouter_projet, lister_projets, modifier_projet, supprimer_projet,
-    activer_suivi_projet, desactiver_suivi_projet
+    ajouter_projet, lister_projets, modifier_projet, supprimer_projet
 )
 from .agent_calendrier import (
     lister_prochains_evenements, creer_evenement_calendrier, modifier_evenement_calendrier,

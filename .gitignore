@@ -2,6 +2,7 @@
 .env
 token.json
 credentials.json
+memoire/*.json
 
 # Logs
 *.log
@@ -26,7 +27,4 @@ ENV/
 
 # Données temporaires
 *.tmp
-*.temp
-
-# Données de l'application (tâches, projets, etc.)
-memoire/*.json 
+*.temp 

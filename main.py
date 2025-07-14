@@ -52,46 +52,6 @@ from agents.agent_projets import lister_projets
 dernier_chat_id_actif = None
 
 
-def normalize_calendar_name(name: str) -> str:
-    """
-    Normalise un nom de calendrier pour la comparaison :
-    - Supprime les emojis et de nombreux symboles.
-    - Met en minuscules.
-    - Supprime les espaces au début et à la fin.
-    """
-    if not name:
-        return ""
-    # Expression régulière pour supprimer une large gamme d'émojis et de symboles
-    # C'est une approche agressive pour maximiser les chances de correspondance.
-    try:
-        emoji_pattern = re.compile(
-            "["
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # symbols & pictographs
-            "\U0001F680-\U0001F6FF"  # transport & map symbols
-            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-            "\U00002500-\U00002BEF"  # chinese char
-            "\U00002702-\U000027B0"
-            "\U000024C2-\U0001F251"
-            "\U0001f926-\U0001f937"
-            "\U00010000-\U0010ffff"
-            "\u2640-\u2642"
-            "\u2600-\u2B55"
-            "\u200d"
-            "\u23cf"
-            "\u23e9"
-            "\u231a"
-            "\ufe0f"  # dingbats
-            "\u3030"
-            "]+",
-            flags=re.UNICODE,
-        )
-        # On supprime les emojis, puis les espaces superflus et on met en minuscule
-        return emoji_pattern.sub(r'', name).strip().lower()
-    except re.error:
-        # En cas d'erreur de regex, on fait un nettoyage simple
-        return ''.join(c for c in name if c.isalnum() or c.isspace()).strip().lower()
-
 # --- Nouvelle fonction de Suivi Intelligent (Le "Superviseur") ---
 async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -160,48 +120,45 @@ async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
         # --- 2. NOUVEAU : SUIVI DES ÉVÉNEMENTS TERMINÉS ---
         logger.info("⏰ SUPERVISEUR: Vérification des événements terminés...")
         evenements_passes = lister_evenements_passes(jours=1) # On regarde les dernières 24h
-        logger.debug(f"SUPERVISEUR_DEBUG: Événements passés trouvés: {[e['summary'] for e in evenements_passes]}")
+        # CORRECTION : On s'assure que les événements ont un 'summary' avant de les logger pour éviter un crash.
+        logger.debug(f"SUPERVISEUR_DEBUG: Événements passés trouvés: {[e.get('summary', 'Événement sans titre') for e in evenements_passes]}")
 
-        evenements_deja_suivis = lire_evenements_suivis()
-        logger.debug(f"SUPERVISEUR_DEBUG: Événements déjà suivis: {evenements_deja_suivis}")
+        evenements_deja_suivis_bruts = lire_evenements_suivis()
+        # On nettoie la liste pour gérer l'ancien format (dictionnaires) et le nouveau (strings)
+        evenements_deja_suivis_ids = {item['id_evenement'] if isinstance(item, dict) else item for item in evenements_deja_suivis_bruts}
+        logger.debug(f"SUPERVISEUR_DEBUG: IDs des événements déjà suivis (nettoyés): {evenements_deja_suivis_ids}")
 
         projets = lister_projets()
 
-        # On crée un mapping normalisé pour trouver facilement les infos d'un projet.
-        projet_par_calendrier = {
-            normalize_calendar_name(p.get('calendrier_associe', '')): p 
-            for p in projets if p.get('calendrier_associe')
-        }
-        logger.info(f"SUPERVISEUR_DEBUG: Mapping Calendrier->Projet disponible pour: {list(projet_par_calendrier.keys())}")
+        # Le mapping par nom n'est plus nécessaire, on va comparer par ID.
 
         for event in evenements_passes:
             logger.info(f"SUPERVISEUR: --- Traitement de l'événement: '{event['summary']}' (ID: {event['id']}) ---")
             
-            # Condition 1: L'événement n'a pas déjà été suivi
-            if event['id'] in evenements_deja_suivis:
+            # Condition 1: L'événement n'a pas déjà été suivi (on utilise la liste nettoyée)
+            if event['id'] in evenements_deja_suivis_ids:
                 logger.info(f"SUPERVISEUR_RESULTAT: -> Ignoré (déjà suivi).")
                 continue
 
             # Condition 2: L'événement est lié à un projet qui a le suivi activé
-            # On normalise le nom du calendrier de l'événement pour la recherche
-            nom_calendrier_normalise = normalize_calendar_name(event['calendar'])
-            logger.info(f"SUPERVISEUR_ETAPE: Calendrier de l'événement: '{event['calendar']}'. Nom normalisé: '{nom_calendrier_normalise}'")
-            
-            projet_associe = projet_par_calendrier.get(nom_calendrier_normalise)
-            
-            if not projet_associe:
-                logger.info(f"SUPERVISEUR_RESULTAT: -> Ignoré (aucun projet associé trouvé pour ce calendrier).")
+            event_calendar_id = event.get('calendar_id')
+            if not event_calendar_id:
+                logger.info(f"SUPERVISEUR_RESULTAT: -> Ignoré (ID de calendrier manquant dans l'objet événement).")
                 continue
-            
-            logger.info(f"SUPERVISEUR_ETAPE: -> Projet associé trouvé: '{projet_associe['nom']}'.")
-            
-            suivi_actif = projet_associe.get('suivi_proactif_active')
-            logger.info(f"SUPERVISEUR_ETAPE: -> Statut du suivi proactif pour ce projet: {suivi_actif}")
-            
-            if projet_associe and suivi_actif:
-                logger.info(f"🧠 INITIATEUR: Événement '{event['summary']}' terminé. Préparation du suivi proactif.")
 
-                # On crée un prompt pour que l'IA demande comment ça s'est passé
+            # On cherche si un projet est associé, sans se soucier de l'activation du suivi.
+            projet_associe = None
+            if event_calendar_id:
+                projet_associe = next((
+                    p for p in projets
+                    if p.get('calendrier_id') == event_calendar_id
+                ), None)
+
+            prompt_initiateur = ""
+            # SIMPLIFICATION : On envoie systématiquement un suivi, mais on adapte le prompt.
+            if projet_associe:
+                # Cas 1 : L'événement est lié à un projet. On garde le coaching intelligent.
+                logger.info(f"SUPERVISEUR_ETAPE: -> Projet associé trouvé: '{projet_associe['nom']}'. Suivi de coach déclenché.")
                 prompt_initiateur = f"""
                 L'événement "{event['summary']}" (du projet "{projet_associe['nom']}" {projet_associe['emoji']}) vient de se terminer.
                 Ton rôle de coach proactif est de maintenir l'élan de l'utilisateur.
@@ -214,22 +171,35 @@ async def suivi_intelligent(context: ContextTypes.DEFAULT_TYPE):
 
                 Le ton doit être celui d'un coach partenaire, pas d'un robot. Concis, pertinent et inspirant.
                 """
+            else:
+                # Cas 2 : L'événement n'est lié à aucun projet. On utilise un suivi générique.
+                logger.info(f"SUPERVISEUR_ETAPE: -> Aucun projet associé. Suivi générique déclenché.")
+                prompt_initiateur = f"""
+                L'événement "{event['summary']}" qui n'était lié à aucun projet spécifique vient de se terminer.
 
-                historique_proactif = [
-                    {"role": "system", "content": generer_contexte_complet(datetime.datetime.now(pytz.timezone("Europe/Paris")).strftime('%Y-%m-%d %H:%M:%S'))},
-                    {"role": "user", "content": prompt_initiateur}
-                ]
-                
-                reponse_ia = router_requete_utilisateur(historique_proactif)
-                
-                # On envoie le message généré par l'IA à l'utilisateur
-                # CORRECTION: On utilise context.bot.send_message, pas une autre méthode.
-                await context.bot.send_message(chat_id=dernier_chat_id_actif, text=reponse_ia, parse_mode='HTML')
-                logger.info(f"✅ SUIVI ENVOYÉ: Message de suivi pour l'événement '{event['summary']}' envoyé.")
+                Ton rôle est d'être un assistant proactif et serviable.
+                - Réagis de façon naturelle et encourageante à la fin de l'événement.
+                - Demande simplement à l'utilisateur si une nouvelle tâche ou un suivi découle de cet événement.
+                - Propose de créer cette tâche pour lui s'il est d'accord.
+                - Sois bref et conversationnel.
+                """
+            
+            # La suite de la logique est maintenant commune aux deux cas.
+            logger.info(f"🧠 INITIATEUR: Événement '{event.get('summary', 'Sans titre')}' terminé. Préparation du suivi proactif.")
 
-                # On marque l'événement comme suivi pour ne plus le notifier
-                ajouter_evenement_suivi(event['id'])
-                logger.info(f"💾 ÉVÉNEMENT MIS À JOUR: Le suivi pour '{event['summary']}' (ID: {event['id']}) est marqué comme envoyé.")
+            historique_proactif = [
+                {"role": "system", "content": generer_contexte_complet(datetime.datetime.now(pytz.timezone("Europe/Paris")).strftime('%Y-%m-%d %H:%M:%S'))},
+                {"role": "user", "content": prompt_initiateur}
+            ]
+            
+            reponse_ia = router_requete_utilisateur(historique_proactif)
+            
+            await context.bot.send_message(chat_id=dernier_chat_id_actif, text=reponse_ia, parse_mode='HTML')
+            logger.info(f"✅ SUIVI ENVOYÉ: Message de suivi pour l'événement '{event.get('summary', 'Sans titre')}' envoyé.")
+
+            # On marque l'événement comme suivi pour ne plus le notifier
+            ajouter_evenement_suivi(event['id'])
+            logger.info(f"💾 ÉVÉNEMENT MIS À JOUR: Le suivi pour '{event.get('summary', 'Sans titre')}' (ID: {event['id']}) est marqué comme envoyé.")
 
     except Exception as e:
         logger.error(f"🔥 ERREUR: Le superviseur a rencontré une erreur inattendue: {e}", exc_info=True)
@@ -517,7 +487,7 @@ La date d'aujourd'hui est le {datetime.date.today().isoformat()}.
     
     # On limite la taille de l'historique pour ne pas surcharger la mémoire et l'API
     # en utilisant une méthode intelligente qui préserve l'intégrité des conversations.
-    MAX_MESSAGES = 20
+    MAX_MESSAGES = 50
     if len(history) > MAX_MESSAGES:
         logger.info("🧠 MÉMOIRE: L'historique dépasse %d messages, nettoyage en cours...", MAX_MESSAGES)
         

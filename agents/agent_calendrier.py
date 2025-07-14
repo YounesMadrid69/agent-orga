@@ -4,6 +4,8 @@
 import datetime
 import os.path
 import logging
+import pytz # On importe pytz pour gérer les fuseaux horaires de manière robuste
+from dateutil import parser # On importe le parseur de date pour comparer les heures de fin
 
 # Importations spécifiques à l'authentification et à l'API Google
 from google.auth.transport.requests import Request
@@ -108,10 +110,13 @@ def lister_prochains_evenements(nombre_evenements: int = 10, nom_calendrier: str
         formatted_events = []
         for event in all_events[:nombre_evenements]:
             start = event['start'].get('dateTime', event['start'].get('date'))
+            # CORRECTION : On ajoute l'heure de fin !
+            end = event['end'].get('dateTime', event['end'].get('date'))
             formatted_events.append({
                 "id": event['id'],
                 "summary": event['summary'],
                 "start": start,
+                "end": end, # Champ ajouté
                 "calendar": event['calendar_summary']
             })
         return formatted_events
@@ -124,6 +129,7 @@ def lister_evenements_passes(jours: int = 1) -> list:
     """
     Liste les événements terminés depuis le nombre de jours spécifié.
     Par défaut, cherche les événements des dernières 24 heures.
+    Ignore certains calendriers système (ex: "Numéros de semaine").
     """
     log_msg = f"📅 CALENDRIER: Récupération des événements terminés depuis {jours} jour(s)."
     logger.info(log_msg)
@@ -131,79 +137,110 @@ def lister_evenements_passes(jours: int = 1) -> list:
         creds = _get_credentials()
         service = build('calendar', 'v3', credentials=creds)
         
-        now = datetime.datetime.utcnow()
+        # CORRECTION : On utilise une heure "aware" (consciente de son fuseau horaire) 
+        # pour éviter toute ambiguïté lors de la comparaison avec les heures des événements.
+        now = datetime.datetime.now(pytz.utc) 
         time_min = now - datetime.timedelta(days=jours)
         
-        # Formatage pour l'API Google
-        time_min_iso = time_min.isoformat() + 'Z'
-        now_iso = now.isoformat() + 'Z'
+        # Le formatage ISO gère maintenant correctement le fuseau horaire.
+        time_min_iso = time_min.isoformat()
+        now_iso = now.isoformat()
         
+        # On définit ici une liste de noms de calendriers à ignorer.
+        # On utilise des minuscules pour une comparaison insensible à la casse.
+        CALENDARS_TO_IGNORE = ['numéros de semaine', 'jours fériés']
+
         all_calendars = lister_tous_les_calendriers()
-        calendar_ids_to_check = [c['id'] for c in all_calendars]
+
+        # On filtre la liste des calendriers pour exclure ceux que l'on veut ignorer.
+        calendars_a_verifier = [
+            cal for cal in all_calendars
+            if cal.get('summary', '').lower() not in CALENDARS_TO_IGNORE
+        ]
+        logger.debug(f"Calendriers à vérifier (après filtrage): {[c['summary'] for c in calendars_a_verifier]}")
+
 
         all_events = []
-        for calendar_id in calendar_ids_to_check:
-            events_result = service.events().list(
-                calendarId=calendar_id, 
-                timeMin=time_min_iso,
-                timeMax=now_iso,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            events = events_result.get('items', [])
-            for event in events:
-                # On ajoute le nom du calendrier à chaque événement pour une utilisation ultérieure
-                event['calendar_summary'] = next((c['summary'] for c in all_calendars if c['id'] == calendar_id), 'Inconnu')
-            all_events.extend(events)
+        # On boucle sur les objets calendrier pour avoir accès à leur ID et leur nom
+        for calendar in calendars_a_verifier:
+            calendar_id = calendar['id']
+            calendar_summary = calendar['summary']
 
-        # Trier tous les événements par date de début
-        all_events.sort(key=lambda x: x['start'].get('dateTime', x['start'].get('date')))
+            try:
+                events_result = service.events().list(
+                    calendarId=calendar_id, 
+                    timeMin=time_min_iso,
+                    timeMax=now_iso,
+                    singleEvents=True,
+                    orderBy='startTime'
+                ).execute()
+                events = events_result.get('items', [])
+                for event in events:
+                    # On ajoute directement les informations du calendrier à l'événement
+                    event['calendar_id'] = calendar_id
+                    event['calendar_summary'] = calendar_summary
+                all_events.extend(events)
+            except HttpError as e:
+                # Si on n'a pas accès à un calendrier (très rare), on logue et on continue
+                logger.warning(f"⚠️ CALENDRIER: Impossible d'accéder au calendrier '{calendar_summary}' (ID: {calendar_id}). Erreur: {e}")
+                continue
+
+        # CORRECTION MAJEURE : On filtre maintenant les événements pour ne garder que ceux dont l'heure de fin est passée.
+        ended_events = []
+        for event in all_events:
+            try:
+                # On récupère l'heure de fin, qu'elle soit pour un événement d'une journée ou un événement horodaté
+                end_time_str = event.get('end', {}).get('dateTime', event.get('end', {}).get('date'))
+                if not end_time_str:
+                    continue
+
+                # On convertit l'heure de fin en objet datetime "aware" pour une comparaison fiable
+                end_time_dt = parser.isoparse(end_time_str)
+                if end_time_dt.tzinfo is None:
+                    end_time_dt = pytz.utc.localize(end_time_dt)
+
+                # La condition clé : on ne garde l'événement que si son heure de fin est passée
+                if end_time_dt < now:
+                    ended_events.append(event)
+            except Exception as e:
+                logger.error(f"🔥 CALENDRIER: Impossible de traiter l'heure de fin pour l'événement '{event.get('summary')}'. Erreur: {e}")
+                continue
+                
+        # On trie les événements terminés par date de début
+        ended_events.sort(key=lambda x: x['start'].get('dateTime', x['start'].get('date')))
         
         # On ne garde que les champs utiles
         formatted_events = []
-        for event in all_events:
-            start = event['start'].get('dateTime', event['start'].get('date'))
-            end = event['end'].get('dateTime', event['end'].get('date'))
-            formatted_events.append({
-                "id": event['id'],
-                "summary": event['summary'],
-                "start": start,
-                "end": end,
-                "calendar": event['calendar_summary']
-            })
+        for event in ended_events:
+            # On vérifie que l'événement a bien un titre ('summary') avant de le traiter.
+            if 'summary' in event:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                end = event['end'].get('dateTime', event['end'].get('date'))
+                # On utilise maintenant les informations du calendrier qu'on a ajoutées.
+                formatted_events.append({
+                    "id": event['id'],
+                    "summary": event['summary'],
+                    "start": start,
+                    "end": end,
+                    "calendar_summary": event['calendar_summary'],
+                    "calendar_id": event['calendar_id']
+                })
         return formatted_events
 
     except Exception as e:
-        logger.error(f"🔥 CALENDRIER: Erreur lors de la récupération des événements passés: {e}")
+        logger.error(f"🔥 CALENDRIER: Erreur lors de la récupération des événements passés: {e}", exc_info=True)
         return [{"erreur": str(e)}]
 
 
-def creer_evenement_calendrier(titre: str, date_heure_debut: str, date_heure_fin: str = None, nom_calendrier_cible: str = None) -> dict:
+def creer_evenement_calendrier(titre: str, date_heure_debut: str, date_heure_fin: str, nom_calendrier_cible: str = None) -> dict:
     """
-    Crée un événement.
-    Si nom_calendrier_cible est fourni, il est utilisé en priorité absolue.
-    Sinon, une logique intelligente est utilisée pour trouver le bon calendrier.
+    Crée un événement. L'heure de début et de fin DOIVENT être fournies.
+    La logique de choix du calendrier est maintenant entièrement gérée par l'IA.
     """
-    logger.info("📅 CALENDRIER: Tentative de création de l'événement '%s'.", titre)
+    logger.info("📅 CALENDRIER: Tentative de création de l'événement '%s' de %s à %s.", titre, date_heure_debut, date_heure_fin)
 
-    # Si l'heure de fin n'est pas fournie, on la calcule (1h de durée par défaut)
-    if not date_heure_fin:
-        try:
-            # On parse la date de début. On remplace 'Z' pour la compatibilité.
-            debut = datetime.datetime.fromisoformat(date_heure_debut.replace('Z', '+00:00'))
-            # On ajoute une heure
-            fin = debut + datetime.timedelta(hours=1)
-            # On la reconvertit en string au format ISO
-            date_heure_fin = fin.isoformat()
-            logger.info(f"💡 CALENDRIER: Heure de fin non fournie. Fin calculée pour durer 1h : {date_heure_fin}")
-        except ValueError:
-            msg = f"Format de date de début '{date_heure_debut}' invalide. Impossible de calculer l'heure de fin."
-            logger.error(f"🔥 CALENDRIER: {msg}")
-            return {"erreur": msg}
-
-    # TOUTE LA LOGIQUE D'ASSOCIATION INTELLIGENTE EST SUPPRIMÉE D'ICI.
-    # C'est maintenant la responsabilité de l'IA (le conseiller) de choisir le bon calendrier
-    # et de fournir le bon titre (avec emoji).
+    # La logique de calcul de durée par défaut a été supprimée.
+    # L'IA est maintenant responsable de fournir une date de fin.
 
     try:
         creds = _get_credentials()

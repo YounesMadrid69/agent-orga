@@ -13,6 +13,7 @@ import logging
 from .agent_taches import (
     ajouter_tache, lister_taches, modifier_tache,
     supprimer_tache, changer_statut_tache,
+    reorganiser_taches, # On importe le nouvel outil
     ajouter_sous_tache, lister_sous_taches, modifier_sous_tache,
     supprimer_sous_tache, changer_statut_sous_tache,
     lier_tache_a_evenement
@@ -47,11 +48,12 @@ except Exception as e:
 # NOTE : Les types sont maintenant directement en MAJUSCULES pour être compatibles avec Gemini.
 gemini_tools = [
     # Outils pour les Tâches
-    {"type": "function", "function": {"name": "lister_taches", "description": "Obtenir la liste de toutes les tâches, triées par priorité (selon la matrice d'Eisenhower)."}},
+    {"type": "function", "function": {"name": "lister_taches", "description": "Obtenir la liste de toutes les tâches, triées par priorité (P1, P2...) puis par ordre personnalisé."}},
     {"type": "function", "function": {"name": "ajouter_tache", "description": "Ajouter une nouvelle tâche. L'importance et l'urgence peuvent être spécifiées.", "parameters": {"type": "OBJECT", "properties": {"description": {"type": "STRING", "description": "Description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Nom du projet associé."}, "important": {"type": "BOOLEAN", "description": "La tâche est-elle importante ?"}, "urgent": {"type": "BOOLEAN", "description": "La tâche est-elle urgente ?"}, "date_echeance": {"type": "STRING", "description": "Optionnel. Date et heure d'échéance de la tâche au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}}, "required": ["description"]}}},
     {"type": "function", "function": {"name": "modifier_tache", "description": "Modifier une tâche (description, projet, importance, urgence). La priorité sera recalculée automatiquement.", "parameters": {"type": "OBJECT", "properties": {"description_actuelle": {"type": "STRING", "description": "Description actuelle de la tâche à modifier."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description de la tâche."}, "nom_projet": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet pour la tâche."}, "nouvelle_importance": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'importance."}, "nouvelle_urgence": {"type": "BOOLEAN", "description": "Optionnel. Le nouveau statut d'urgence."}, "nouvelle_date_echeance": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure d'échéance au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}}, "required": ["description_actuelle"]}}},
     {"type": "function", "function": {"name": "changer_statut_tache", "description": "Changer le statut d'une tâche (à faire, en cours, terminée).", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à modifier."}, "nouveau_statut": {"type": "STRING", "description": "Le nouveau statut."}}, "required": ["description_tache", "nouveau_statut"]}}},
     {"type": "function", "function": {"name": "supprimer_tache", "description": "Supprimer une tâche.", "parameters": {"type": "OBJECT", "properties": {"description_tache": {"type": "STRING", "description": "Description de la tâche à supprimer."}}, "required": ["description_tache"]}}},
+    {"type": "function", "function": {"name": "reorganiser_taches", "description": "Change l'ordre des tâches au sein d'un même niveau de priorité (P1, P2, P3, ou P4).", "parameters": {"type": "OBJECT", "properties": {"priorite_cible": {"type": "STRING", "description": "Le niveau de priorité à réorganiser ('P1', 'P2', 'P3' ou 'P4')."}, "descriptions_ordonnees": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "La liste des descriptions de tâches, dans le nouvel ordre souhaité."}}, "required": ["priorite_cible", "descriptions_ordonnees"]}}},
     {"type": "function", "function": {"name": "lier_tache_a_evenement", "description": "Interne: Associe un ID d'événement Google Calendar à une tâche après sa création.", "parameters": {"type": "OBJECT", "properties": {"id_tache": {"type": "STRING", "description": "ID de la tâche à lier."}, "id_evenement": {"type": "STRING", "description": "ID de l'événement Google Calendar à lier."}}, "required": ["id_tache", "id_evenement"]}}},
     
     # Outils pour les Sous-Tâches
@@ -66,13 +68,11 @@ gemini_tools = [
     {"type": "function", "function": {"name": "ajouter_projet", "description": "Créer un nouveau projet. Une description, un calendrier et un émoji peuvent être spécifiés.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Le nom du nouveau projet."}, "description": {"type": "STRING", "description": "Optionnel. Une description détaillée des objectifs du projet."}, "calendrier_associe": {"type": "STRING", "description": "Optionnel. Le nom du Google Calendar lié à ce projet."}, "emoji": {"type": "STRING", "description": "Optionnel. Un émoji unique pour représenter le projet (ex: '🚀')."}}, "required": ["nom"]}}},
     {"type": "function", "function": {"name": "modifier_projet", "description": "Mettre à jour le nom, la description, le calendrier ou l'émoji d'un projet existant via son ID.", "parameters": {"type": "OBJECT", "properties": {"id_projet": {"type": "STRING", "description": "ID du projet à modifier."}, "nouveau_nom": {"type": "STRING", "description": "Optionnel. Le nouveau nom du projet."}, "nouvelle_description": {"type": "STRING", "description": "Optionnel. La nouvelle description complète du projet."}, "nouveau_calendrier": {"type": "STRING", "description": "Optionnel. Le nouveau nom du calendrier Google à associer."}, "nouvel_emoji": {"type": "STRING", "description": "Optionnel. Le nouvel émoji pour le projet."}}, "required": ["id_projet"]}}},
     {"type": "function", "function": {"name": "supprimer_projet", "description": "Supprimer un projet.", "parameters": {"type": "OBJECT", "properties": {"nom": {"type": "STRING", "description": "Nom du projet à supprimer."}}, "required": ["nom"]}}},
-    {"type": "function", "function": {"name": "activer_suivi_projet", "description": "Activer les notifications de suivi pour les événements d'un projet.", "parameters": {"type": "OBJECT", "properties": {"nom_projet": {"type": "STRING", "description": "Le nom du projet pour lequel activer le suivi."}}, "required": ["nom_projet"]}}},
-    {"type": "function", "function": {"name": "desactiver_suivi_projet", "description": "Désactiver les notifications de suivi pour les événements d'un projet.", "parameters": {"type": "OBJECT", "properties": {"nom_projet": {"type": "STRING", "description": "Le nom du projet pour lequel désactiver le suivi."}}, "required": ["nom_projet"]}}},
-
+    
     # Outils pour le Calendrier
     {"type": "function", "function": {"name": "lister_tous_les_calendriers", "description": "Obtenir la liste de tous les calendriers Google de l'utilisateur."}},
     {"type": "function", "function": {"name": "lister_prochains_evenements", "description": "Obtenir les prochains événements. Peut chercher dans un calendrier spécifique ou dans tous.", "parameters": {"type": "OBJECT", "properties": {"nom_calendrier": {"type": "STRING", "description": "Optionnel. Le nom du calendrier à consulter."}}}}},
-    {"type": "function", "function": {"name": "creer_evenement_calendrier", "description": "Crée un nouvel événement. Si le titre correspond à une tâche existante, il utilisera intelligemment le calendrier du projet associé. Si l'heure de fin n'est pas spécifiée, l'événement durera 1 heure.", "parameters": {"type": "OBJECT", "properties": {"titre": {"type": "STRING", "description": "Titre de l'événement. Utiliser la description exacte d'une tâche si possible."}, "date_heure_debut": {"type": "STRING", "description": "Date et heure de début au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}, "date_heure_fin": {"type": "STRING", "description": "Optionnel. Date et heure de fin au format ISO 8601. Par défaut, 1h après le début."}, "nom_calendrier_cible": {"type": "STRING", "description": "Optionnel. Si ce paramètre est fourni, l'événement sera créé dans ce calendrier spécifique, ignorant toute autre logique d'association."}}, "required": ["titre", "date_heure_debut"]}}},
+    {"type": "function", "function": {"name": "creer_evenement_calendrier", "description": "Crée un nouvel événement dans le calendrier. Tu dois OBLIGATOIREMENT spécifier une heure de début ET de fin.", "parameters": {"type": "OBJECT", "properties": {"titre": {"type": "STRING", "description": "Titre de l'événement. Utiliser la description exacte d'une tâche si possible."}, "date_heure_debut": {"type": "STRING", "description": "Date et heure de début au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}, "date_heure_fin": {"type": "STRING", "description": "Date et heure de fin au format ISO 8601 (YYYY-MM-DDTHH:MM:SS)."}, "nom_calendrier_cible": {"type": "STRING", "description": "Optionnel. Si ce paramètre est fourni, l'événement sera créé dans ce calendrier spécifique, ignorant toute autre logique d'association."}}, "required": ["titre", "date_heure_debut", "date_heure_fin"]}}},
     {"type": "function", "function": {"name": "modifier_evenement_calendrier", "description": "Modifier un événement existant (titre, début, fin, calendrier) via son ID.", "parameters": {"type": "OBJECT", "properties": {"event_id": {"type": "STRING", "description": "ID de l'événement à modifier."}, "nouveau_titre": {"type": "STRING", "description": "Optionnel. Le nouveau titre de l'événement."}, "nouvelle_date_heure_debut": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure de début au format ISO 8601."}, "nouvelle_date_heure_fin": {"type": "STRING", "description": "Optionnel. La nouvelle date et heure de fin au format ISO 8601."}, "nouveau_nom_calendrier": {"type": "STRING", "description": "Optionnel. Le nom du calendrier de destination pour déplacer l'événement."}}, "required": ["event_id"]}}},
     {"type": "function", "function": {"name": "supprimer_evenement_calendrier", "description": "Supprimer un événement du calendrier avec son ID.", "parameters": {"type": "OBJECT", "properties": {"event_id": {"type": "STRING", "description": "ID de l'événement à supprimer."}}, "required": ["event_id"]}}},
 
@@ -91,10 +91,10 @@ gemini_tools = [
 # Mapping complet des outils
 available_functions = {
     "lister_taches": lister_taches, "ajouter_tache": ajouter_tache, "modifier_tache": modifier_tache, "supprimer_tache": supprimer_tache, "changer_statut_tache": changer_statut_tache,
+    "reorganiser_taches": reorganiser_taches, # On ajoute la fonction au mapping
     "lier_tache_a_evenement": lier_tache_a_evenement,
     "ajouter_sous_tache": ajouter_sous_tache, "lister_sous_taches": lister_sous_taches, "modifier_sous_tache": modifier_sous_tache, "supprimer_sous_tache": supprimer_sous_tache, "changer_statut_sous_tache": changer_statut_sous_tache,
     "lister_projets": lister_projets, "ajouter_projet": ajouter_projet, "modifier_projet": modifier_projet, "supprimer_projet": supprimer_projet,
-    "activer_suivi_projet": activer_suivi_projet, "desactiver_suivi_projet": desactiver_suivi_projet,
     "lister_prochains_evenements": lister_prochains_evenements, "creer_evenement_calendrier": creer_evenement_calendrier, "modifier_evenement_calendrier": modifier_evenement_calendrier, "supprimer_evenement_calendrier": supprimer_evenement_calendrier,
     "lister_tous_les_calendriers": lister_tous_les_calendriers,
     "creer_calendrier": creer_calendrier, "renommer_calendrier": renommer_calendrier, "supprimer_calendrier": supprimer_calendrier,
@@ -160,6 +160,21 @@ Voici les informations et préférences que tu as enregistrées pour t'en souven
 """
 
     prompt_systeme = f"""
+# RÈGLES IMPÉRATIVES
+1.  **L'ORDRE DE L'UTILISATEUR EST LA PRIORITÉ ABSOLUE :** Quand tu suggères la prochaine tâche à effectuer, tu dois OBLIGATOIREMENT suivre l'ordre numérique (1, 2, 3...) des tâches P1, puis P2, etc. N'utilise JAMAIS ta propre logique pour outrepasser cet ordre. Biensur si tu vois une incohérence ou tu as mieux à proposer tu peux suggérer mais tu dois être conscient de sa volonté
+2.  **VÉRIFICATION DES FAITS :** Avant de mentionner un projet, vérifie scrupuleusement le nom du projet associé à la tâche dans le contexte que tu as reçu. Ne jamais inventer ou supposer une association.
+3.  **ZÉRO BAVARDAGE :** N'annonce JAMAIS ce que tu vas faire. Ne dis jamais "Je vais vérifier...", "Un instant...", "Laissez-moi regarder...". Agis en silence.
+4.  **ACTION D'ABORD :** Ta première réponse à une requête utilisateur doit TOUJOURS être un appel d'outil (une `function_call`), sauf si la question est une salutation simple ou une conversation hors-sujet.
+5.  **RÉPONSE FINALE UNIQUEMENT :** Ne fournis une réponse textuelle que lorsque tu as rassemblé TOUTES les informations nécessaires et que tu as la réponse complète et définitive.
+
+# GESTION INTELLIGENTE DE LA DURÉE DES ÉVÉNEMENTS
+- **Principe : La durée n'est JAMAIS fixée à 1h par défaut.** Tu dois estimer la durée la plus logique.
+- **Processus de réflexion :**
+    1. **Analyse le titre et le contexte :** Une "Réunion rapide" dure 30 min. Un "Atelier de travail" dure 3h. Une "Session de sport" dure 1h30. Utilise le bon sens et le contexte de la conversation.
+    2. **Consulte l'agenda :** Avant de proposer un créneau, vérifie toujours les disponibilités de l'utilisateur avec `lister_prochains_evenements`.
+    3. **Stratégie : Proposer et Confirmer :** Si la durée n'est pas explicitement donnée par l'utilisateur, propose une durée logique et demande sa confirmation. Exemple : "Pour la tâche 'Préparer la présentation', je te propose de bloquer un créneau de 2h. Ça te va ?"
+    4. **Agir :** Une fois la durée confirmée ou si elle était claire dès le début, appelle l'outil `creer_evenement_calendrier` avec l'heure de début ET de fin.
+
 # PROFIL DE L'ASSISTANT
 Tu es un assistant personnel expert en organisation et productivité, agissant comme un coach proactif.
 Ton ton est encourageant, concis et orienté vers l'action.

@@ -2,7 +2,6 @@
 .env
 token.json
 credentials.json
-memoire/*.json
 
 # Logs
 *.log
